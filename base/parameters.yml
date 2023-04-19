@@ -4,4 +4,6 @@
 
 
 base_folder: ""
-tracking_data: {"siCdc42": ["siCDC42/SUM_230330_siCDC42_20dyn_TrackMate.csv"], "siScr": ["siScr/SUM_230413_siScr_TrackMate.csv"]}
+tracking_data: {"siCdc42": ["/siCDC42/SUM_230330_siCDC42_20dyn_TrackMate.csv", 
+"/siCDC42/SUM_230322_siCDC42_TrackMate.csv", "/siCDC42/SUM_230405_siCDC42_20dyn_TrackMate.csv"], "siScr": ["/siScr/SUM_230413_siScr_TrackMate.csv", "/siScr/SUM_230405_siScr_20dyn_TrackMate.csv"],
+"siRac1": ["/siRac1/SUM_230413_siRac1_TrackMate.csv.csv"]}
