@@ -5,5 +5,10 @@
 
 base_folder: ""
 tracking_data: {"siCdc42": ["/siCDC42/SUM_230330_siCDC42_20dyn_TrackMate.csv", 
-"/siCDC42/SUM_230322_siCDC42_TrackMate.csv", "/siCDC42/SUM_230405_siCDC42_20dyn_TrackMate.csv"], "siScr": ["/siScr/SUM_230413_siScr_TrackMate.csv", "/siScr/SUM_230405_siScr_20dyn_TrackMate.csv"],
-"siRac1": ["/siRac1/SUM_230413_siRac1_TrackMate.csv.csv"]}
+"/siCDC42/SUM_230322_siCDC42_TrackMate.csv", "/siCDC42/SUM_230405_siCDC42_20dyn_TrackMate.csv"], "siScr": ["/siScr/SUM_230405_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230413_siScr_TrackMate.csv","/siScr/SUM_230420_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230427_siScr_TrackMate.csv"],
+"siRac1": ["/siRac1/SUM_230413_siRac1_TrackMate.csv.csv", "/siRac1/SUM_230420_siRac1_TrackMate.csv", "/siRac1/SUM_230427_siRac1_TrackMate.csv"]}
+
+min_track_length: 12
+time_lag: 12 # interval for velocity computation in minutes
+end_phase_1: 24 # end of phase 1 in frames 
+start_phase_2: 24 # start of phase 2 in frames 
