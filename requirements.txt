@@ -1,0 +1,4 @@
+jupyter==1.0.0
+pandas==1.5.2
+seaborn==0.12.2
+statannot==0.2.3
