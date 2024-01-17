@@ -63,7 +63,7 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
         data_["ORIGIN_Y"] = data_["POSITION_Y"] - data_["START_Y"]
         data_["ORIGIN_L"] = np.sqrt(data_["ORIGIN_X"] ** 2 + data_["ORIGIN_Y"] ** 2)
 
-        outpath = output_folder + subfolder + "/tracking_data_%s.csv" % row["experimentID"]
+        outpath = output_folder + subfolder + "/tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
         print("Saving tracking data to: ", outpath)
         data_.to_csv(outpath, index=False)
 
@@ -85,7 +85,7 @@ def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
 
     for index, row in key_file.iterrows():
 
-        tracking_file = "tracking_data_%s.csv" % row["experimentID"]
+        tracking_file = "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
         print("Processing file: ", row["filename"])
         data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
 
@@ -94,4 +94,4 @@ def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
         sns.scatterplot(data=data, x="FRAME", y="TRACK_ID")
         ax.set_title("Experiment ID %s" % row["experimentID"])
 
-        fig.savefig(parameters["output_folder"] + "/quality_control/quality_control_%s.png" % row["experimentID"])
+        fig.savefig(parameters["output_folder"] + "/quality_control/quality_control_%s_%s_%s.png" % (row["treatment"], row["color"], row["experimentID"]))
