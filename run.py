@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 from utils.io import read_parameters
 from src.compute_speeds import prepare_tracking_data
 from src.compute_speeds import plot_quality_control
+from src.plot_trajectories import plot_trajectories_per_file
+from src.plot_trajectories import plot_trajectories_from_origin_per_file
 
 
 #########################
@@ -51,7 +53,7 @@ key_file.to_csv(output_folder + "/key_file.csv", index=False)
 #########################
 
 # create a subfolder for each subject
-subjects = ["tracking_data", "trajectory_plot","velocity_plots","quality_control"]
+subjects = ["tracking_data", "trajectory_plots","velocity_plots","quality_control"]
 
 for subject in subjects:
     if not os.path.exists(output_folder + "/" + subject):
@@ -61,8 +63,8 @@ for subject in subjects:
 # read data
 #########################
 
-#tracking_data = prepare_tracking_data(parameters, key_file)
-#tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
+# tracking_data = prepare_tracking_data(parameters, key_file)
+# tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
 
 #print(tracking_data.head())
 
@@ -73,13 +75,18 @@ for subject in subjects:
 plot_quality_control(parameters, key_file, subfolder = "tracking_data")
 
 #########################
+# plot trajectories
+#########################
+
+plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data")
+plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tracking_data")
+
+
+#########################
 # run analysis - velocity plots
 #########################
 
 # grouped by condition and filename
-
-
-
 
 plt.rcParams.update({'font.size': 14})
 
