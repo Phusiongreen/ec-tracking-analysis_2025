@@ -86,7 +86,7 @@ def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
     for index, row in key_file.iterrows():
 
         tracking_file = "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
-        print("Processing file: ", row["filename"])
+        print("Plot quality control for file ", row["filename"])
         data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
 
         # tracking_data_df_ = tracking_data_df[tracking_data_df["filename"] == filename]

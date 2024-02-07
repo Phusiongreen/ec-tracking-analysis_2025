@@ -10,6 +10,7 @@ from src.compute_speeds import prepare_tracking_data
 from src.compute_speeds import plot_quality_control
 from src.plot_trajectories import plot_trajectories_per_file
 from src.plot_trajectories import plot_trajectories_from_origin_per_file
+from src.plot_trajectories import plot_trajectories_from_origin_per_condition
 
 
 #########################
@@ -63,8 +64,8 @@ for subject in subjects:
 # read data
 #########################
 
-# tracking_data = prepare_tracking_data(parameters, key_file)
-# tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
+#tracking_data = prepare_tracking_data(parameters, key_file)
+#tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
 
 #print(tracking_data.head())
 
@@ -72,14 +73,15 @@ for subject in subjects:
 # quality control
 #########################
 
-plot_quality_control(parameters, key_file, subfolder = "tracking_data")
+#plot_quality_control(parameters, key_file, subfolder = "tracking_data")
 
 #########################
 # plot trajectories
 #########################
 
-plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data")
-plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tracking_data")
+#plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data")
+#plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tracking_data")
+plot_trajectories_from_origin_per_condition(parameters, key_file, subfolder = "tracking_data", number_of_tracks_per_condition = 1000)
 
 
 #########################
