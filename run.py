@@ -60,12 +60,18 @@ for subject in subjects:
     if not os.path.exists(output_folder + "/" + subject):
         os.mkdir(output_folder + "/" + subject)
 
+workflows = parameters["workflows"]
+print("The following workflows will be executed: ", workflows)
+
+#["preprocess_trajectories", "tracking_data", "quality_control", "plot_trajectories", "plot_speeds"]
+
 #########################
 # read data
 #########################
 
-#tracking_data = prepare_tracking_data(parameters, key_file)
-#tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
+if "preprocess_trajectories" in workflows:
+    tracking_data = prepare_tracking_data(parameters, key_file)
+    tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
 
 #print(tracking_data.head())
 
@@ -73,7 +79,9 @@ for subject in subjects:
 # quality control
 #########################
 
-#plot_quality_control(parameters, key_file, subfolder = "tracking_data")
+
+
+plot_quality_control(parameters, key_file, subfolder = "tracking_data")
 
 #########################
 # plot trajectories
