@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 import yaml
 import pandas as pd
 import seaborn as sns
@@ -17,8 +18,23 @@ from src.plot_trajectories import plot_trajectories_from_origin_per_condition
 # read parameters
 #########################
 
-parser = argparse.ArgumentParser(description='Run ec movement trajectory analysis ')
+parser = argparse.ArgumentParser(
+    description='This script runs ec movement trajectory analysis. '
+                'You need to provide a parameter file and optionally '
+                'an input folder, a key file, and an output folder.',
+    epilog='Example usage: python run.py parameters.yaml --input_folder /path/to/input '
+           '--key_file /path/to/key --output_folder /path/to/output',
+)
+#parser.add_argument('param', type=str, help='Path to the parameter file.')
 parser.add_argument('param', type=str, help='Path to the parameter file.')
+parser.add_argument('--input_folder', type=str, help='Path to the input folder.')
+parser.add_argument('--key_file', type=str, help='Path to the key file.')
+parser.add_argument('--output_folder', type=str, help='Path to the output folder.')
+
+if len(sys.argv) < 4:
+    #parser.print_usage()
+    parser.print_help()
+    sys.exit(1)
 
 args = parser.parse_args()
 print("-------")
@@ -27,6 +43,14 @@ print("-------")
 
 parameter_file  = args.param
 parameters = read_parameters(parameter_file)               
+
+# Override parameters with command line arguments if provided
+if args.input_folder:
+    parameters["input_folder"] = args.input_folder
+if args.output_folder:
+    parameters["output_folder"] = args.output_folder
+if args.key_file:
+    parameters["key_file"] = args.key_file
 
 print("-------")
 print("used parameter values: ")
