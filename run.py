@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from utils.io import read_parameters
 from src.compute_speeds import prepare_tracking_data
 from src.compute_speeds import plot_quality_control
+from src.compute_speeds import compute_speeds
 from src.plot_trajectories import plot_trajectories_per_file
 from src.plot_trajectories import plot_trajectories_from_origin_per_file
 from src.plot_trajectories import plot_trajectories_from_origin_per_condition
@@ -78,7 +79,7 @@ key_file.to_csv(output_folder + "/key_file.csv", index=False)
 #########################
 
 # create a subfolder for each subject
-subjects = ["tracking_data", "trajectory_plots","velocity_plots","quality_control"]
+subjects = ["tracking_data", "speed_data","trajectory_plots","velocity_plots","quality_control"]
 
 for subject in subjects:
     if not os.path.exists(output_folder + "/" + subject):
@@ -104,16 +105,25 @@ if "preprocess_trajectories" in workflows:
 #########################
 
 
-
-plot_quality_control(parameters, key_file, subfolder = "tracking_data")
+if "qc_metrics" in workflows:
+    plot_quality_control(parameters, key_file, subfolder = "tracking_data")
 
 #########################
 # plot trajectories
 #########################
 
-#plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data")
-#plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tracking_data")
-plot_trajectories_from_origin_per_condition(parameters, key_file, subfolder = "tracking_data", number_of_tracks_per_condition = 1000)
+if "plot_trajectories" in workflows:
+    #plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data")
+    #plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tracking_data")
+    plot_trajectories_from_origin_per_condition(parameters, key_file, subfolder = "tracking_data", number_of_tracks_per_condition = 1000)
+
+#########################
+# compute speeds
+    ########################
+
+if "compute_speeds" in workflows:
+    compute_speeds(parameters, key_file, subfolder = "tracking_data")
+
 
 
 #########################

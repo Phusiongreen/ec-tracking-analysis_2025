@@ -95,3 +95,82 @@ def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
         ax.set_title("Experiment ID %s" % row["experimentID"])
 
         fig.savefig(parameters["output_folder"] + "/quality_control/quality_control_%s_%s_%s.png" % (row["treatment"], row["color"], row["experimentID"]))
+
+
+
+def compute_speeds(parameters, key_file, subfolder = "tracking_data"):
+
+    interval = parameters["time_lag"]
+    decimal_places = parameters["decimal_places"]
+    output_folder = parameters["output_folder"]
+
+    tracking_data_path = output_folder + subfolder + "/"
+
+    for index, row in key_file.iterrows():
+
+        migration_speed_df = pd.DataFrame()
+        tracking_file = "tracking_data_%s_%s_%s.csv" % (row["treatment"], 
+                                                        row["color"], row["experimentID"])
+               
+        print("Compute speeds for file ", row["filename"])
+        
+        tracks_df_ = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
+        tracks_df = tracks_df_[["TRACK_ID", "POSITION_X", "POSITION_Y", 
+                                "POSITION_T", "FRAME", "ORIGIN_X", "ORIGIN_Y"]]
+
+        status = 0
+        tracks_num = len(tracks_df["TRACK_ID"].unique())
+
+        for track_id in tracks_df["TRACK_ID"].unique():
+            single_track_df = tracks_df[tracks_df ["TRACK_ID"]==track_id]
+            single_track_df = single_track_df.sort_values(by="FRAME")
+            dist = single_track_df.diff(interval).fillna(0.)
+            dist["time_in_h"] = dist["POSITION_T"]/3600.0
+
+            single_track_df["step_size"] = np.round(np.sqrt(dist.POSITION_X**2 + dist.POSITION_Y**2),decimal_places)
+            single_track_df["step_size_x"] = np.round(dist.POSITION_X,decimal_places)
+            single_track_df["step_size_y"] =  np.round(dist.POSITION_Y,decimal_places)
+            single_track_df["vel_mu_per_h"] = np.round(np.sqrt(dist.POSITION_X**2 + dist.POSITION_Y**2)/dist.time_in_h,decimal_places)
+            single_track_df["vel_x_mu_per_h"] = np.round(dist.POSITION_X/dist.time_in_h,decimal_places)
+            single_track_df["vel_y_mu_per_h"] =  np.round(dist.POSITION_Y/dist.time_in_h,decimal_places)
+            
+            single_track_df["phi"] =  np.round(np.arctan2(dist.POSITION_Y,-dist.POSITION_X)*180.0/np.pi,decimal_places)
+
+            single_track_df["filename"] = tracking_file
+            single_track_df["condition"] = tracks_df_["condition"].iloc[0]
+            
+            single_track_df["time_in_h"] = np.round(single_track_df["POSITION_T"]/3600.0,decimal_places)
+            
+            if len(migration_speed_df.index) > 1:
+                migration_speed_df = pd.concat( [migration_speed_df, single_track_df], ignore_index=True)
+            else:
+                migration_speed_df = single_track_df.copy()
+            
+            status +=1 
+            if status % 500 == 0:
+                print("%s out of %s tracks analyzed." % (status,tracks_num)) 
+
+            del single_track_df
+            del dist
+
+        migration_speed_filepath = output_folder + "speed_data/migration_speed_df_%s_%s_%s.csv" % (row["treatment"],
+                                                                                         row["color"], 
+                                                                                         row["experimentID"])
+        migration_speed_df.to_csv(migration_speed_filepath, index=False)
+
+        #data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
+
+        #data["DELTA_T"] = data["POSITION_T"] - data["POSITION_T"].shift(1)
+        #data["DELTA_X"] = data["POSITION_X"] - data["POSITION_X"].shift(1)
+        #data["DELTA_Y"] = data["POSITION_Y"] - data["POSITION_Y"].shift(1)
+
+        #data["VEL_X"] = data["DELTA_X"] / data["DELTA_T"]
+        #data["VEL_Y"] = data["DELTA_Y"] / data["DELTA_T"]
+
+        #data["VEL"] = np.sqrt(data["VEL_X"] ** 2 + data["VEL_Y"] ** 2)
+
+       # data.to_csv(tracking_data_path + tracking_file, index=False)
+
+        del migration_speed_df
+
+    return
