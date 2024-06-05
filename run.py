@@ -91,17 +91,15 @@ print("The following workflows will be executed: ", workflows)
 #["preprocess_trajectories", "tracking_data", "quality_control", "plot_trajectories", "plot_speeds"]
 
 #########################
-# read data
+# 1.Step : preprocess data
 #########################
 
 if "preprocess_trajectories" in workflows:
     tracking_data = prepare_tracking_data(parameters, key_file)
     tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
 
-#print(tracking_data.head())
-
 #########################
-# quality control
+# 2.Step : quality control
 #########################
 
 
