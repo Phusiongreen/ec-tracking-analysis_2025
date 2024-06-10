@@ -14,7 +14,9 @@ max_value = 40.0
 min_value = -40.0
 
 def get_color_from_speed(vel_x):
+    '''
     
+    '''
     rel_vel = (vel_x - min_value)/(max_value  - min_value)
     return rel_vel
     
@@ -102,6 +104,23 @@ def plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tr
         plt.savefig(output_folder + "/trajectory_plots/origin_trajectories_%s_%s_%s.png" % (row["treatment"], row["color"], row["experimentID"]))
         plt.savefig(output_folder + "/trajectory_plots/origin_trajectories_%s_%s_%s.pdf" % (row["treatment"], row["color"], row["experimentID"]))
         plt.close()
+
+
+def plot_trajectories_single_condition(parameters, key_file, subfolder = "tracking_data", figsize = (9,9)):
+
+    fig, ax = plt.subplots(figsize=(9,9))
+
+    output_folder = parameters["output_folder"]
+    tracking_data_path = output_folder + subfolder + "/"
+
+    average_data_df = pd.DataFrame(columns = ["condition", "treatment", "delta_x", "delta_y"])
+    average_data_per_file_df = pd.DataFrame(columns = ["condition", "treatment", "tracking_file", "color", 
+                                                       "delta_x", "delta_y", "total_distance"])
+
+
+
+    return fig, ax
+
 
 
 def plot_trajectories_from_origin_per_condition(parameters, key_file, subfolder = "tracking_data", number_of_tracks_per_condition = 1000):
