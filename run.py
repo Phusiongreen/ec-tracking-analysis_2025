@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 import yaml
 import pandas as pd
 import seaborn as sns
@@ -8,16 +9,33 @@ import matplotlib.pyplot as plt
 from utils.io import read_parameters
 from src.compute_speeds import prepare_tracking_data
 from src.compute_speeds import plot_quality_control
+from src.compute_speeds import compute_speeds
 from src.plot_trajectories import plot_trajectories_per_file
 from src.plot_trajectories import plot_trajectories_from_origin_per_file
+from src.plot_trajectories import plot_trajectories_from_origin_per_condition
 
 
 #########################
 # read parameters
 #########################
 
-parser = argparse.ArgumentParser(description='Run ec movement trajectory analysis ')
+parser = argparse.ArgumentParser(
+    description='This script runs ec movement trajectory analysis. '
+                'You need to provide a parameter file and optionally '
+                'an input folder, a key file, and an output folder.',
+    epilog='Example usage: python run.py parameters.yaml --input_folder /path/to/input '
+           '--key_file /path/to/key --output_folder /path/to/output',
+)
+#parser.add_argument('param', type=str, help='Path to the parameter file.')
 parser.add_argument('param', type=str, help='Path to the parameter file.')
+parser.add_argument('--input_folder', type=str, help='Path to the input folder.')
+parser.add_argument('--key_file', type=str, help='Path to the key file.')
+parser.add_argument('--output_folder', type=str, help='Path to the output folder.')
+
+if len(sys.argv) < 4:
+    #parser.print_usage()
+    parser.print_help()
+    sys.exit(1)
 
 args = parser.parse_args()
 print("-------")
@@ -26,6 +44,14 @@ print("-------")
 
 parameter_file  = args.param
 parameters = read_parameters(parameter_file)               
+
+# Override parameters with command line arguments if provided
+if args.input_folder:
+    parameters["input_folder"] = args.input_folder
+if args.output_folder:
+    parameters["output_folder"] = args.output_folder
+if args.key_file:
+    parameters["key_file"] = args.key_file
 
 print("-------")
 print("used parameter values: ")
@@ -53,33 +79,56 @@ key_file.to_csv(output_folder + "/key_file.csv", index=False)
 #########################
 
 # create a subfolder for each subject
-subjects = ["tracking_data", "trajectory_plots","velocity_plots","quality_control"]
+subjects = ["tracking_data", "speed_data","trajectory_plots","velocity_plots","quality_control"]
 
 for subject in subjects:
     if not os.path.exists(output_folder + "/" + subject):
         os.mkdir(output_folder + "/" + subject)
 
+workflows = parameters["workflows"]
+print("The following workflows will be executed: ", workflows)
+
+#["preprocess_trajectories", "tracking_data", "quality_control", "plot_trajectories", "plot_speeds"]
+
 #########################
-# read data
+# 1.Step : preprocess data
 #########################
 
+<<<<<<< HEAD
 tracking_data = prepare_tracking_data(parameters, key_file)
 # tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
 
 #print(tracking_data.head())
+=======
+if "preprocess_trajectories" in workflows:
+    tracking_data = prepare_tracking_data(parameters, key_file)
+    tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
+>>>>>>> 418c66b8d7b56b6037263d6b1bf51369824ae4f2
 
 #########################
-# quality control
+# 2.Step : quality control
 #########################
 
-plot_quality_control(parameters, key_file, subfolder = "tracking_data")
+
+if "qc_metrics" in workflows:
+    plot_quality_control(parameters, key_file, subfolder = "tracking_data")
 
 #########################
 # plot trajectories
 #########################
 
-plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data")
-plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tracking_data")
+if "plot_trajectories" in workflows:
+    #plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data")
+    #plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tracking_data")
+    plot_trajectories_from_origin_per_condition(parameters, key_file, subfolder = "tracking_data", number_of_tracks_per_condition = 1000)
+
+#########################
+# compute speeds
+    ########################
+
+if "compute_speeds" in workflows:
+    compute_speeds(parameters, key_file, subfolder = "tracking_data")
+
 
 
 #########################

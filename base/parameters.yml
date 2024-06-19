@@ -2,23 +2,47 @@
 # set local data and output folders
 ########################
 
-
 base_folder: ""
 
 output_folder: "../data/"
+
+
+########################
+# assign condtions to tracking data
+########################
 
 tracking_data: {"siCdc42": ["/siCDC42/SUM_230330_siCDC42_20dyn_TrackMate.csv", 
 "/siCDC42/SUM_230322_siCDC42_TrackMate.csv", "/siCDC42/SUM_230405_siCDC42_20dyn_TrackMate.csv", "/siCDC42/230511_siCDC42_20dyn_TrackMate.csv"], "siScr": ["/siScr/SUM_230405_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230413_siScr_TrackMate.csv","/siScr/SUM_230420_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230427_siScr_TrackMate.csv", "/siScr/SUM_230504_siScr_TrackMate.csv", "/siScr/230511_siScr_TrackMate.csv"],
 "siRac1": ["/siRac1/SUM_230413_siRac1_TrackMate.csv", "/siRac1/SUM_230420_siRac1_TrackMate.csv", "/siRac1/SUM_230427_siRac1_TrackMate.csv", "/siRac1/SUM_230504_siRac1_TrackMate.csv"]}
 
+key_file: ""
+
+condition_order: []
+
 data_exclude: []
 
+# quality control parameters
+
 min_track_length: 12 # minimum track length in frames
+number_of_cells_per_file: 100 
+
+
+# plot parameters trajectories
+
+number_of_cells_per_condition: 300
+
+# parameters for velocity computation
+
 time_lag: 12 # interval for velocity computation in frames
+observation_phase: [0, 24]
 single_time_point_evaluation: 48 
 
+#parameters to save storage
+decimal_places : 3
 
+
+
+#remove these parameters
 start_phase_2: 24 # start of phase 2 in frames 
 end_phase_1: 48 # end of phase 1 in frames 
-
 
