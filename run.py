@@ -63,7 +63,7 @@ for subject in subjects:
 # read data
 #########################
 
-# tracking_data = prepare_tracking_data(parameters, key_file)
+tracking_data = prepare_tracking_data(parameters, key_file)
 # tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
 
 #print(tracking_data.head())
