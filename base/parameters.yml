@@ -30,8 +30,10 @@ min_track_length: 12 # minimum track length in frames
 ## bootstrap trajectory plots
 
 observation_time: [0, 24] # in frames
+allow_tracks_shorter_than_observation_time: true # if True, tracks shorter than observation_time will be included in the plot
 number_of_tracks_per_file: 100 
 number_of_tracks_per_condition: 300
+
 
 # parameters for velocity computation
 
