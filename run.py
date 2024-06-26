@@ -107,7 +107,7 @@ if "qc_metrics" in workflows:
     plot_quality_control(parameters, key_file, subfolder = "tracking_data")
 
 #########################
-# plot trajectories
+# 3. Step : plot trajectories
 #########################
 
 if "plot_trajectories" in workflows:
@@ -117,7 +117,7 @@ if "plot_trajectories" in workflows:
 
 #########################
 # compute speeds
-    ########################
+########################
 
 if "compute_speeds" in workflows:
     compute_speeds(parameters, key_file, subfolder = "tracking_data")

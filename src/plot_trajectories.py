@@ -7,20 +7,13 @@ import matplotlib
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
-cmap = matplotlib.colormaps["seismic"]
-#max_value = 39.625
-#min_value = -39.625
-max_value = 40.0
-min_value = -40.0
-
-def get_color_from_speed(vel_x):
+def normalize_speed(vel_x, min_value, max_value):
     '''
-    
+    normalize the speed values to the range [0,1]
     '''
     rel_vel = (vel_x - min_value)/(max_value  - min_value)
     return rel_vel
     
-
 
 def plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data"):
 
