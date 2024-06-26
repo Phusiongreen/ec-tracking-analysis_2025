@@ -94,9 +94,16 @@ print("The following workflows will be executed: ", workflows)
 # 1.Step : preprocess data
 #########################
 
+<<<<<<< HEAD
+tracking_data = prepare_tracking_data(parameters, key_file)
+# tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
+
+#print(tracking_data.head())
+=======
 if "preprocess_trajectories" in workflows:
     tracking_data = prepare_tracking_data(parameters, key_file)
     tracking_data.to_csv(output_folder + "tracking_data/tracking_data.csv", index=False)
+>>>>>>> 418c66b8d7b56b6037263d6b1bf51369824ae4f2
 
 #########################
 # 2.Step : quality control
