@@ -6,6 +6,7 @@ base_folder: ""
 
 output_folder: "../data/"
 
+workflows: ["preprocess_trajectories", "qc_metrics", "plot_trajectories", "compute_speeds"]
 
 ########################
 # assign condtions to tracking data
