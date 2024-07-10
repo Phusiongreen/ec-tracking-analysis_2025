@@ -4,3 +4,4 @@ seaborn==0.12.2
 statannot==0.2.3
 pyyaml==6.0
 griottes==0.1.1
+dabest==2024.3.29

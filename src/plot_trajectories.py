@@ -27,7 +27,7 @@ def plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data"
         print("Plotting trajectories from file: ", tracking_file)
         data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
 
-        phase_1_data_df = data[data["FRAME"] <= parameters["end_phase_1"]]
+        phase_1_data_df = data[data["FRAME"] <= parameters["observation_time"][1]]
 
         fig, ax = plt.subplots(figsize=(9,9))
 
@@ -61,14 +61,14 @@ def plot_trajectories_from_origin_per_file(parameters, key_file, subfolder = "tr
         print("Plotting trajectories (starting at origin) from file: ", tracking_file)
         data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
 
-        phase_1_data_df = data[data["FRAME"] <= parameters["end_phase_1"]]
+        phase_1_data_df = data[data["FRAME"] <= parameters["observation_time"][1]]
 
         fig, ax = plt.subplots(figsize=(9,9))
 
         for track_id in phase_1_data_df["TRACK_ID"].unique():
             single_track_df = phase_1_data_df[phase_1_data_df["TRACK_ID"] == track_id]
 
-            if len(single_track_df.index) < parameters["end_phase_1"]:
+            if len(single_track_df.index) < parameters["observation_time"][1]:
                 continue
 
             end_x = np.array(single_track_df["ORIGIN_X"])[-1]
@@ -164,7 +164,7 @@ def plot_trajectories_from_origin_per_condition(parameters, key_file, subfolder 
                 
                 data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
 
-                phase_1_data_df = data[data["FRAME"] <= parameters["end_phase_1"]]
+                phase_1_data_df = data[data["FRAME"] <= parameters["observation_time"][1]]
 
                 trackID_list = np.array(phase_1_data_df["TRACK_ID"].unique())
                 print("Available tracks: %s" % len(trackID_list))
