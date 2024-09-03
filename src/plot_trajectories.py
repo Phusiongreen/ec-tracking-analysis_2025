@@ -15,7 +15,15 @@ def normalize_speed(vel_x, min_value, max_value):
     return rel_vel
     
 
-def plot_trajectories_per_file(parameters, key_file, subfolder = "tracking_data"):
+def plot_trajectories(parameters, tracking_data, ax):
+
+    for track_id in tracking_data["TRACK_ID"].unique():
+        single_track_df = tracking_data[tracking_data["TRACK_ID"] == track_id]
+        ax.plot(single_track_df["POSITION_X"],single_track_df["POSITION_Y"])
+
+    return ax
+
+def plot_trajectories_key_file(parameters, key_file, subfolder = "tracking_data"):
 
     output_folder = parameters["output_folder"]
     tracking_data_path = output_folder + subfolder + "/"
