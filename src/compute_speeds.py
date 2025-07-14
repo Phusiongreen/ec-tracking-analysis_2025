@@ -7,8 +7,15 @@ import seaborn as sns
 
 def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
     """
-    This function reads the tracking data from the csv files and prepares it for further analysis.
+    This function reads the tracking data from the Trackmate generated csv files and prepares it for single trajectory analysis, but its generated spreadsheets are
+     also used for plotting collective migration plots for some reason.
     """
+
+    # Ensure the required columns are present
+    required_columns = {"filename", "condition", "treatment", "color", "experimentID"}
+    missing = required_columns - set(key_file.columns)
+    if missing:
+        raise KeyError(f"Missing columns in key_file: {missing}")
 
     base_folder = parameters["base_folder"]
     output_folder = parameters["output_folder"]
@@ -26,7 +33,7 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
     for index, row in key_file.iterrows():
 
         print("Processing file: ", row["filename"])
-        #data = pd.read_csv(base_folder + row["filename"], low_memory=False).drop([0, 1, 2])
+        #data = pd.read_csv(base_folder + row["filename"], low_memory=False).drop([0, 1, 2]) #this is now done at 00_correct_time_points_from_trackmate.ipynb
         data = pd.read_csv(base_folder + row["filename"], low_memory=False)
 
         data_ = data[list(column_dtypes)]
@@ -54,7 +61,8 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
             start_y = np.array(single_track_df["POSITION_Y"])[0]
             data_.loc[data_.TRACK_ID == track_id, "START_X"] = start_x
             data_.loc[data_.TRACK_ID == track_id, "START_Y"] = start_y
-
+            """the following conditional is to remove tracks that are too short. This is important, as the fluorescence of the cells decrease over time, and trackmate cannot segment the cells as properly later.
+             This ensures that there is not a bias in the data due to short tracks. """
             if track_length < parameters["min_track_length"]:
                 data_ = data_[data_["TRACK_ID"] != track_id]
 
@@ -95,6 +103,17 @@ def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
         ax.set_title("Experiment ID %s" % row["experimentID"])
 
         fig.savefig(parameters["output_folder"] + "/quality_control/quality_control_%s_%s_%s.png" % (row["treatment"], row["color"], row["experimentID"]))
+        
+        
+"""The inactive function below is taken from track_analysis.py, which is used to generate the second quality control plot in the early code(the non numbered notebooks). 
+It line plots the total number of tracks that are available at the given time point. It does not discriminate how long the tracks are, but can be used for checking fluorescence loss over time
+Ideally to be called during 02_Quality_control, bit more useful than the previous function above imo
+"""
+#for filename in tracking_data_df["filename"].unique():
+ #   tracking_data_df_ = tracking_data_df[tracking_data_df["filename"] == filename]
+  #  fig, ax = plt.subplots(figsize=(20,10))
+   # tracking_data_df_[["FRAME","TRACK_ID"]].groupby("FRAME").count().plot(ax =ax)
+    #ax.set_title(filename)
 
 
 
@@ -123,11 +142,12 @@ def compute_speeds(parameters, key_file, subfolder = "tracking_data"):
 
         for track_id in tracks_df["TRACK_ID"].unique():
             single_track_df = tracks_df[tracks_df ["TRACK_ID"]==track_id]
+            #just like in prepare_tracking_data, there needs to be a a track_length definition here and later a min_track_length conditional to omit short tracks to ensure that only tracks that are long enough are analyzed.
             single_track_df = single_track_df.sort_values(by="FRAME")
             dist = single_track_df.diff(interval).fillna(0.)
             dist["time_in_h"] = dist["POSITION_T"]/3600.0
 
-            single_track_df["step_size"] = np.round(np.sqrt(dist.POSITION_X**2 + dist.POSITION_Y**2),decimal_places)
+            single_track_df["step_size"] = np.round(np.sqrt(dist.POSITION_X**2 + dist.POSITION_Y**2),decimal_places) #not sure what this is used for, but it is in the original code
             single_track_df["step_size_x"] = np.round(dist.POSITION_X,decimal_places)
             single_track_df["step_size_y"] =  np.round(dist.POSITION_Y,decimal_places)
             single_track_df["vel_mu_per_h"] = np.round(np.sqrt(dist.POSITION_X**2 + dist.POSITION_Y**2)/dist.time_in_h,decimal_places)
@@ -155,7 +175,7 @@ def compute_speeds(parameters, key_file, subfolder = "tracking_data"):
 
         migration_speed_filepath = output_folder + "speed_data/migration_speed_df_%s_%s_%s.csv" % (row["treatment"],
                                                                                          row["color"], 
-                                                                                         row["experimentID"])
+                                                                                         row["experimentID"]) #not too fond of this naming, but it is how 06_plot_migration_speeds.ipynb uses to identify exp groups.
         migration_speed_df.to_csv(migration_speed_filepath, index=False)
 
         #data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
