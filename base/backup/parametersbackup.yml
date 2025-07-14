@@ -1,0 +1,55 @@
+########################
+# set local data and output folders
+########################
+
+base_folder: "../data/trackmate_timecorrected/"
+tracking_data: {"WT": ["C1-ltorrotated-resized-HUVEC_WT_100k_stat_22h_spots.csv","C1-ltorrotated-resized-HUVEC_WT_100k_15dynrampup_flow_22h_spots.csv"], "siSMAD4": ["230317_siSMAD4.csv"]}
+
+output_folder: "../data/"
+
+workflows: ["preprocess_trajectories", "qc_metrics", "plot_trajectories", "compute_speeds"]
+
+########################
+# assign condtions to tracking data
+########################
+
+###tracking data format reference do not delete!### tracking_data: {"siCdc42": ["/siCDC42/SUM_230330_siCDC42_20dyn_TrackMate.csv", 
+#"/siCDC42/SUM_230322_siCDC42_TrackMate.csv", "/siCDC42/SUM_230405_siCDC42_20dyn_TrackMate.csv", "/siCDC42/230511_siCDC42_20dyn_TrackMate.csv"], "siScr": ["/siScr/SUM_230405_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230413_siScr_TrackMate.csv","/siScr/SUM_230420_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230427_siScr_TrackMate.csv", "/siScr/SUM_230504_siScr_TrackMate.csv", "/siScr/230511_siScr_TrackMate.csv"],
+#"siRac1": ["/siRac1/SUM_230413_siRac1_TrackMate.csv", "/siRac1/SUM_230420_siRac1_TrackMate.csv", "/siRac1/SUM_230427_siRac1_TrackMate.csv", "/siRac1/SUM_230504_siRac1_TrackMate.csv"]}
+
+key_file: "../key.csv"
+
+condition_order: []
+
+data_exclude: []
+
+# physical parameters
+
+frames_per_hour: 6 # number of frames per hour
+
+# quality control parameters
+
+min_track_length: 12 # minimum track length in frames
+
+# plot parameters
+
+## bootstrap trajectory plots
+
+observation_time: [0, 24] # in frames
+allow_tracks_shorter_than_observation_time: true # if True, tracks shorter than observation_time will be included in the plot
+number_of_tracks_per_file: 100 
+number_of_tracks_per_condition: 300
+
+
+# parameters for velocity computation
+
+time_lag: 4 # interval for velocity computation in frames
+single_time_point_evaluation: 48 
+
+#remove these parameters
+start_phase_2: 24 # start of phase 2 in frames 
+end_phase_1: 48 # end of phase 1 in frames 
+
+
+#parameters to save storage
+decimal_places : 3
