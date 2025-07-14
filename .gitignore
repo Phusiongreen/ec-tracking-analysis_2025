@@ -1,0 +1,11 @@
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Plots and exports
+plots
+*.png
+*.jpg
+*.pdf
+
+# VSCode workspace settings
+.vscode/

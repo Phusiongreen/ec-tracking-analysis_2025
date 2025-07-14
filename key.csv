@@ -1,0 +1,4 @@
+experimentID,filename,color,treatment,condition,frame_per_hour,date
+WT_100k_stat_22h,C1-ltorrotated-resized-HUVEC_WT_100k_stat_22h_spots.csv,black,WT,stat,10,06/06/2021
+WT_100k_15dynrampup_flow_22h,C1-ltorrotated-resized-HUVEC_WT_100k_15dynrampup_flow_22h_spots.csv,black,WT,flow,10,28/07/2022
+230317_siSMAD4,230317_siSMAD4.csv,red,siSMAD4,flow,10,15/06/2022
