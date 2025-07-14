@@ -2,9 +2,47 @@
 # set local data and output folders
 ########################
 
-base_folder: ""
+base_folder: "../data/combined_analysis_copy/"
 
-output_folder: "../data/"
+tracking_data: {
+    "WT+noVEGF": [
+        "C1-ltorrotated-resized-HUVEC_WT_100k_stat_22h_spots.csv",
+        "C1-ltorrotated-resized-HUVEC_WT_100k_15dynrampup_flow_22h_spots.csv",
+        "timecorrected_C1-ltorrotated-resized-WT_Stat-utod_noVEGF_spots.csv",
+        "timecorrected_C1-ltorrotated-resized-WT_Flow-utod_VEGF_spots.csv",
+        "timecorrected_Chan1-ltorrotated-resized-C2_utod_spots.csv"
+    ],
+    "WT+lowVEGF": [
+        "timecorrected_Chan1-ltorrotated-resized-E1_static__spots.csv",
+        "timecorrected_Chan1-ltorrotated-resized-E2_flow__spots.csv"
+    ],
+    "WT+highVEGF": [
+        "timecorrected_C1-ltorrotated-resized-WT_Stat-utod_likelyVEGF_spots.csv",
+        "timecorrected_C1-ltorrotated-resized-WT_Flow-utod_NoVEGF_spots.csv",
+        "timecorrected_Chan1-ltorrotated-resized-C4_utod_spots.csv",
+        "timecorrected_Chan1-ltorrotated-resized-E3_static__spots.csv",
+        "timecorrected_Chan1-ltorrotated-resized-E4_flow__spots.csv"
+    ],
+    "siCtrl+lowVEGF": [
+        "timecorrected_Chan1-ltorrotated-resized-E5_flow-up_spots.csv"
+    ],
+    "siCtrl+highVEGF": [
+        "timecorrected_Chan1-ltorrotated-resized-D2_spots.csv",
+        "timecorrected_Chan1-ltorrotated-resized-E7_flow-up_spots.csv"
+    ],
+    "siKank1+lowVEGF": [
+        "timecorrected_Chan1-ltorrotated-resized-E6_flow-down_spots.csv"
+    ],
+    "siKank1+highVEGF": [
+        "timecorrected_Chan1-ltorrotated-resized-D4_spots.csv",
+        "timecorrected_Chan1-ltorrotated-resized-E8_flow-down_spots.csv"
+    ]
+}
+
+
+##tracking_data: {"WT+lowVEGF": ["timecorrected_Chan1-ltorrotated-resized-E1_static__spots.csv", "timecorrected_Chan1-ltorrotated-resized-E2_flow__spots.csv"], "WT+highVEGF": ["timecorrected_Chan1-ltorrotated-resized-E3_static__spots.csv", "timecorrected_Chan1-ltorrotated-resized-E4_flow__spots.csv"], "siCtrl+lowVEGF": ["timecorrected_Chan1-ltorrotated-resized-E5_flow-up_spots.csv"], "sikank+lowVEGF": ["timecorrected_Chan1-ltorrotated-resized-E6_flow-down_spots.csv"], "siCtrl+highVEGF": ["timecorrected_Chan1-ltorrotated-resized-E7_flow-up_spots.csv"], "siKank1+highVEGF": ["timecorrected_Chan1-ltorrotated-resized-E8_flow-down_spots.csv"]}
+
+output_folder: "../data/combined_analysis_copy/"
 
 workflows: ["preprocess_trajectories", "qc_metrics", "plot_trajectories", "compute_speeds"]
 
@@ -12,7 +50,11 @@ workflows: ["preprocess_trajectories", "qc_metrics", "plot_trajectories", "compu
 # assign condtions to tracking data
 ########################
 
-key_file: ""
+###tracking data format reference do not delete!### tracking_data: {"siCdc42": ["/siCDC42/SUM_230330_siCDC42_20dyn_TrackMate.csv", 
+#"/siCDC42/SUM_230322_siCDC42_TrackMate.csv", "/siCDC42/SUM_230405_siCDC42_20dyn_TrackMate.csv", "/siCDC42/230511_siCDC42_20dyn_TrackMate.csv"], "siScr": ["/siScr/SUM_230405_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230413_siScr_TrackMate.csv","/siScr/SUM_230420_siScr_20dyn_TrackMate.csv", "/siScr/SUM_230427_siScr_TrackMate.csv", "/siScr/SUM_230504_siScr_TrackMate.csv", "/siScr/230511_siScr_TrackMate.csv"],
+#"siRac1": ["/siRac1/SUM_230413_siRac1_TrackMate.csv", "/siRac1/SUM_230420_siRac1_TrackMate.csv", "/siRac1/SUM_230427_siRac1_TrackMate.csv", "/siRac1/SUM_230504_siRac1_TrackMate.csv"]}
+
+key_file: "../data/combined_analysis_copy/key_mig_combined.csv"
 
 condition_order: []
 
@@ -38,12 +80,12 @@ number_of_tracks_per_condition: 300
 
 # parameters for velocity computation
 
-time_lag: 12 # interval for velocity computation in frames
+time_lag: 4 # interval for velocity computation in frames. In this experimental setup, the first 4 frames are in static conditions and these 4 timespoints are used to compute the velocity of the initial static timepoint(so that average velocity starts around 0).
 single_time_point_evaluation: 48 
 
 #remove these parameters
-start_phase_2: 24 # start of phase 2 in frames 
-end_phase_1: 48 # end of phase 1 in frames 
+#start_phase_2: 24 # start of phase 2 in frames 
+#end_phase_1: 48 # end of phase 1 in frames 
 
 
 #parameters to save storage
