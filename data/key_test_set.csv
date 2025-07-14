@@ -1,0 +1,5 @@
+experimentID,filename,color,treatment_old,treatment,condition,frame_per_hour,date
+D2_rep1,timecorrected_Chan1-ltorrotated-resized-D2_spots.csv,black,siCtrl+highVEGF,siCtrl+highVEGF-Flow,Flow-siRNA,10,05/03/2025
+E7_rep2,timecorrected_Chan1-ltorrotated-resized-E7_flow-up_spots.csv,black,siCtrl+highVEGF,siCtrl+highVEGF-Flow,Flow-siRNA,10,13/03/2025
+D1_rep1,timecorrected_Chan1-ltorrotated-resized-D1_spots.csv,black,siCtrl+highVEGF,siCtrl+highVEGF-Stat,Stat-siRNA,10,05/03/2025
+G1_rep1,timecorrected_Chan1-ltorrotated-resized-G1_flow_up_spots.csv,black,siGENOMEsiKank1+lowVEGF,siGENOMEsiKank1+lowVEGF-Flow,Flow-siRNA,10,22/04/2025
