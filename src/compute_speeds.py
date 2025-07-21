@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+from pathlib import Path
 
 
 def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
@@ -34,7 +34,7 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
 
         print("Processing file: ", row["filename"])
         #data = pd.read_csv(base_folder + row["filename"], low_memory=False).drop([0, 1, 2]) #this is now done at 00_correct_time_points_from_trackmate.ipynb
-        data = pd.read_csv(base_folder + row["filename"], low_memory=False)
+        data = pd.read_csv(Path(base_folder).joinpath(row["filename"]), low_memory=False)
 
         data_ = data[list(column_dtypes)]
 
@@ -71,9 +71,9 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
         data_["ORIGIN_Y"] = data_["POSITION_Y"] - data_["START_Y"]
         data_["ORIGIN_L"] = np.sqrt(data_["ORIGIN_X"] ** 2 + data_["ORIGIN_Y"] ** 2)
 
-        outpath = output_folder + subfolder + "/tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
-        print("Saving tracking data to: ", outpath)
-        data_.to_csv(outpath, index=False)
+        outpath = Path(output_folder).joinpath(subfolder , "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"]))
+        print("Saving tracking data to: ", str(outpath))
+        data_.to_csv(str(outpath), index=False)
 
         print("##################")
         if len(tracking_data_df.index) > 10:
@@ -89,13 +89,13 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
 
 def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
 
-    tracking_data_path = parameters["output_folder"] + subfolder + "/"
+    tracking_data_path = Path(parameters["output_folder"]).joinpath(subfolder)
 
     for index, row in key_file.iterrows():
 
         tracking_file = "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
         print("Plot quality control for file ", row["filename"])
-        data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
+        data = pd.read_csv(tracking_data_path.joinpath(tracking_file), low_memory=False)
 
         # tracking_data_df_ = tracking_data_df[tracking_data_df["filename"] == filename]
         fig, ax = plt.subplots(figsize=(20, 10))
@@ -123,7 +123,7 @@ def compute_speeds(parameters, key_file, subfolder = "tracking_data"):
     decimal_places = parameters["decimal_places"]
     output_folder = parameters["output_folder"]
 
-    tracking_data_path = output_folder + subfolder + "/"
+    tracking_data_path = Path(output_folder).joinpath(subfolder)
 
     for index, row in key_file.iterrows():
 
@@ -133,7 +133,7 @@ def compute_speeds(parameters, key_file, subfolder = "tracking_data"):
                
         print("Compute speeds for file ", row["filename"])
         
-        tracks_df_ = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
+        tracks_df_ = pd.read_csv(tracking_data_path.joinpath(tracking_file), low_memory=False)
         tracks_df = tracks_df_[["TRACK_ID", "POSITION_X", "POSITION_Y", 
                                 "POSITION_T", "FRAME", "ORIGIN_X", "ORIGIN_Y"]]
 
@@ -173,10 +173,10 @@ def compute_speeds(parameters, key_file, subfolder = "tracking_data"):
             del single_track_df
             del dist
 
-        migration_speed_filepath = output_folder + "speed_data/migration_speed_df_%s_%s_%s.csv" % (row["treatment"],
+        migration_speed_filepath = Path(output_folder).joinpath("speed_data", "migration_speed_df_%s_%s_%s.csv" % (row["treatment"],
                                                                                          row["color"], 
-                                                                                         row["experimentID"]) #not too fond of this naming, but it is how 06_plot_migration_speeds.ipynb uses to identify exp groups.
-        migration_speed_df.to_csv(migration_speed_filepath, index=False)
+                                                                                         row["experimentID"])) #not too fond of this naming, but it is how 06_plot_migration_speeds.ipynb uses to identify exp groups.
+        migration_speed_df.to_csv(str(migration_speed_filepath), index=False)
 
         #data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
 
