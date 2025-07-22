@@ -17,52 +17,58 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
     if missing:
         raise KeyError(f"Missing columns in key_file: {missing}")
 
-    base_folder = parameters["base_folder"]
-    output_folder = parameters["output_folder"]
+    output_folder = Path(parameters["output_folder"])
 
     tracking_data_df = pd.DataFrame()
 
-    column_dtypes = {   'TRACK_ID': 'int16',
-                        'FRAME': 'int16',
-                        'POSITION_X': 'float16',
-                        'POSITION_Y': 'float16',
-                        'POSITION_T': 'float32'}
+    column_dtypes = {'TRACK_ID': 'int16',
+                     'FRAME': 'int16',
+                     'POSITION_X': 'float16',
+                     'POSITION_Y': 'float16',
+                     'POSITION_T': 'float32'}
+
+    gap_analysis = parameters["gap_analysis"]
 
     print(list(column_dtypes))
 
     for index, row in key_file.iterrows():
-
         print("Processing file: ", row["filename"])
-        #data = pd.read_csv(base_folder + row["filename"], low_memory=False).drop([0, 1, 2]) #this is now done at 00_correct_time_points_from_trackmate.ipynb
-        data = pd.read_csv(Path(base_folder).joinpath(row["filename"]), low_memory=False)
+        # data = pd.read_csv(base_folder + row["filename"], low_memory=False).drop([0, 1, 2]) #this is now done at 00_correct_time_points_from_trackmate.ipynb
+        data = pd.read_csv(str(output_folder.joinpath("time_correction", row["filename"])), low_memory=False)
 
+        # df copy to work on
         data_ = data[list(column_dtypes)]
-
         data_.insert(0, "filename", row["filename"])
         data_.insert(0, "condition", row["condition"])
-
         data_ = data_.astype(column_dtypes)
         data_ = data_.sort_values(by="FRAME")
 
+        # loop through the track ID
         for track_id in data_["TRACK_ID"].unique():
+
+            # extract the single track data
             single_track_df = data_[data_["TRACK_ID"] == track_id]
+
+            # length
             track_length = len(single_track_df.index)
+
             start_frame = single_track_df["FRAME"].min()
             end_frame = single_track_df["FRAME"].max()
-            ### uncomment to check for gaps
-            # if track_length < end_frame - start_frame + 1:
-            #    print("Track: ", track_id, "with length ", track_length, " has a gap")
-            #    print(np.array(single_track_df["FRAME"]))
-            # else:
-            #    print("Track: ", track_id, "with length ", track_length," has no gap")
-            #    print(np.array(single_track_df["FRAME"]))
-            ###
+
+            # check if there is a gap in the track
+            if gap_analysis:
+                if track_length < end_frame - start_frame + 1:
+                    print("Track: ", track_id, "with length ", track_length, " has a gap")
+                    print(np.array(single_track_df["FRAME"]))
+
             start_x = np.array(single_track_df["POSITION_X"])[0]
             start_y = np.array(single_track_df["POSITION_Y"])[0]
+
+            # set the start position
             data_.loc[data_.TRACK_ID == track_id, "START_X"] = start_x
             data_.loc[data_.TRACK_ID == track_id, "START_Y"] = start_y
-            """the following conditional is to remove tracks that are too short. This is important, as the fluorescence of the cells decrease over time, and trackmate cannot segment the cells as properly later.
-             This ensures that there is not a bias in the data due to short tracks. """
+
+            # threshold for track length
             if track_length < parameters["min_track_length"]:
                 data_ = data_[data_["TRACK_ID"] != track_id]
 
@@ -71,7 +77,10 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
         data_["ORIGIN_Y"] = data_["POSITION_Y"] - data_["START_Y"]
         data_["ORIGIN_L"] = np.sqrt(data_["ORIGIN_X"] ** 2 + data_["ORIGIN_Y"] ** 2)
 
-        outpath = Path(output_folder).joinpath(subfolder , "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"]))
+        outpath = Path(output_folder).joinpath(
+            subfolder,
+            "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
+        )
         print("Saving tracking data to: ", str(outpath))
         data_.to_csv(str(outpath), index=False)
 
@@ -87,12 +96,11 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
 
     return tracking_data_df
 
-def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
 
+def plot_quality_control(parameters, key_file, subfolder="tracking_data"):
     tracking_data_path = Path(parameters["output_folder"]).joinpath(subfolder)
 
     for index, row in key_file.iterrows():
-
         tracking_file = "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
         print("Plot quality control for file ", row["filename"])
         data = pd.read_csv(tracking_data_path.joinpath(tracking_file), low_memory=False)
@@ -102,95 +110,129 @@ def plot_quality_control(parameters, key_file, subfolder = "tracking_data"):
         sns.scatterplot(data=data, x="FRAME", y="TRACK_ID")
         ax.set_title("Experiment ID %s" % row["experimentID"])
 
-        fig.savefig(parameters["output_folder"] + "/quality_control/quality_control_%s_%s_%s.png" % (row["treatment"], row["color"], row["experimentID"]))
-        
-        
-"""The inactive function below is taken from track_analysis.py, which is used to generate the second quality control plot in the early code(the non numbered notebooks). 
-It line plots the total number of tracks that are available at the given time point. It does not discriminate how long the tracks are, but can be used for checking fluorescence loss over time
-Ideally to be called during 02_Quality_control, bit more useful than the previous function above imo
-"""
-#for filename in tracking_data_df["filename"].unique():
- #   tracking_data_df_ = tracking_data_df[tracking_data_df["filename"] == filename]
-  #  fig, ax = plt.subplots(figsize=(20,10))
-   # tracking_data_df_[["FRAME","TRACK_ID"]].groupby("FRAME").count().plot(ax =ax)
-    #ax.set_title(filename)
+        fig.savefig(
+            Path(parameters["output_folder"]).joinpath("quality_control", "quality_control_%s_%s_%s.png" % (
+                row["treatment"], row["color"], row["experimentID"]))
+        )
+
+        plt.show()
+
+        # The inactive function below is taken from track_analysis.py, which is used to generate the second
+        # quality control plot in the early code(the non numbered notebooks).
+        # It line plots the total number of tracks that are available at the given time point.
+        # It does not discriminate how long the tracks are, but can be used for checking fluorescence loss over time
+        # Ideally to be called during 02_Quality_control, bit more useful than the previous function above imo
+
+        fig, ax = plt.subplots(figsize=(20, 10))
+        data[["FRAME", "TRACK_ID"]].groupby("FRAME").count().plot(ax=ax)
+        ax.set_title(tracking_file)
+
+        fig.savefig(
+            Path(parameters["output_folder"]).joinpath("quality_control", "quality_control2_%s_%s_%s.png" % (
+                row["treatment"], row["color"], row["experimentID"]))
+        )
+
+        plt.show()
 
 
+def compute_speeds(parameters, key_file, subfolder="tracking_data"):
+    """ This function computes the migration speed of each track in the tracking data."""
 
-def compute_speeds(parameters, key_file, subfolder = "tracking_data"):
-
+    # read parameter
     interval = parameters["time_lag"]
     decimal_places = parameters["decimal_places"]
     output_folder = parameters["output_folder"]
 
     tracking_data_path = Path(output_folder).joinpath(subfolder)
 
+    # iterate over the key_file to process each reported tracking file
     for index, row in key_file.iterrows():
-
         migration_speed_df = pd.DataFrame()
-        tracking_file = "tracking_data_%s_%s_%s.csv" % (row["treatment"], 
-                                                        row["color"], row["experimentID"])
-               
+
+        # check if the tracking file exists
+        tracking_file = "tracking_data_%s_%s_%s.csv" % (
+            row["treatment"],
+            row["color"],
+            row["experimentID"]
+        )
+
         print("Compute speeds for file ", row["filename"])
-        
+
+        # read the tracking data
         tracks_df_ = pd.read_csv(tracking_data_path.joinpath(tracking_file), low_memory=False)
-        tracks_df = tracks_df_[["TRACK_ID", "POSITION_X", "POSITION_Y", 
-                                "POSITION_T", "FRAME", "ORIGIN_X", "ORIGIN_Y"]]
+        # filter the columns to keep only the relevant ones
+        tracks_df = tracks_df_[["TRACK_ID", "POSITION_X", "POSITION_Y", "POSITION_T", "FRAME", "ORIGIN_X", "ORIGIN_Y"]]
 
         status = 0
-        tracks_num = len(tracks_df["TRACK_ID"].unique())
+        num_tracks = len(tracks_df["TRACK_ID"].unique())
+        print("Number of tracks to analyze: ", num_tracks)
 
+        # iterate over each track ID to compute the speed
         for track_id in tracks_df["TRACK_ID"].unique():
-            single_track_df = tracks_df[tracks_df ["TRACK_ID"]==track_id]
-            #just like in prepare_tracking_data, there needs to be a a track_length definition here and later a min_track_length conditional to omit short tracks to ensure that only tracks that are long enough are analyzed.
+
+            # extract the single track data
+            single_track_df = tracks_df[tracks_df["TRACK_ID"] == track_id]
+
+            # sort by frame
             single_track_df = single_track_df.sort_values(by="FRAME")
+
+            # calculate the differences in position and time of "interval" frames
             dist = single_track_df.diff(interval).fillna(0.)
-            dist["time_in_h"] = dist["POSITION_T"]/3600.0
+            dist["time_in_h"] = dist["POSITION_T"] / 3600.0  # convert time from seconds to hours
+            # step size is the euclidean distance of the position differences
+            single_track_df["step_size"] = np.round(
+                np.sqrt(dist.POSITION_X ** 2 + dist.POSITION_Y ** 2), decimal_places
+            )
+            # calculate the step size in x and y direction
+            single_track_df["step_size_x"] = np.round(dist.POSITION_X, decimal_places)
+            single_track_df["step_size_y"] = np.round(dist.POSITION_Y, decimal_places)
 
-            single_track_df["step_size"] = np.round(np.sqrt(dist.POSITION_X**2 + dist.POSITION_Y**2),decimal_places) #not sure what this is used for, but it is in the original code
-            single_track_df["step_size_x"] = np.round(dist.POSITION_X,decimal_places)
-            single_track_df["step_size_y"] =  np.round(dist.POSITION_Y,decimal_places)
-            single_track_df["vel_mu_per_h"] = np.round(np.sqrt(dist.POSITION_X**2 + dist.POSITION_Y**2)/dist.time_in_h,decimal_places)
-            single_track_df["vel_x_mu_per_h"] = np.round(dist.POSITION_X/dist.time_in_h,decimal_places)
-            single_track_df["vel_y_mu_per_h"] =  np.round(dist.POSITION_Y/dist.time_in_h,decimal_places)
-            
-            single_track_df["phi"] =  np.round(np.arctan2(dist.POSITION_Y,-dist.POSITION_X)*180.0/np.pi,decimal_places)
+            # calculate the velocity in mu per hour
+            single_track_df["vel_mu_per_h"] = np.round(
+                np.sqrt(dist.POSITION_X ** 2 + dist.POSITION_Y ** 2) / dist.time_in_h, decimal_places
+            )
+            single_track_df["vel_x_mu_per_h"] = np.round(dist.POSITION_X / dist.time_in_h, decimal_places)
+            single_track_df["vel_y_mu_per_h"] = np.round(dist.POSITION_Y / dist.time_in_h, decimal_places)
 
+            # calculate the direction of the movement in degrees
+            single_track_df["phi"] = np.round(
+                np.arctan2(dist.POSITION_Y, -dist.POSITION_X) * 180.0 / np.pi, decimal_places
+            )
+
+            # save metadata
             single_track_df["filename"] = tracking_file
             single_track_df["condition"] = tracks_df_["condition"].iloc[0]
-            
-            single_track_df["time_in_h"] = np.round(single_track_df["POSITION_T"]/3600.0,decimal_places)
-            
+
+            # convert time from seconds to hours
+            single_track_df["time_in_h"] = np.round(single_track_df["POSITION_T"] / 3600.0, decimal_places)
+
+            # save current track data to the migration speed dataframe
             if len(migration_speed_df.index) > 1:
-                migration_speed_df = pd.concat( [migration_speed_df, single_track_df], ignore_index=True)
+                migration_speed_df = pd.concat([migration_speed_df, single_track_df], ignore_index=True)
             else:
                 migration_speed_df = single_track_df.copy()
-            
-            status +=1 
-            if status % 500 == 0:
-                print("%s out of %s tracks analyzed." % (status,tracks_num)) 
 
+            # print progress
+            status += 1
+            if status % 500 == 0:
+                print("%s out of %s tracks analyzed." % (status, num_tracks))
+
+            # clean up to save memory
             del single_track_df
             del dist
 
-        migration_speed_filepath = Path(output_folder).joinpath("speed_data", "migration_speed_df_%s_%s_%s.csv" % (row["treatment"],
-                                                                                         row["color"], 
-                                                                                         row["experimentID"])) #not too fond of this naming, but it is how 06_plot_migration_speeds.ipynb uses to identify exp groups.
+        # store the migration speed dataframe to a csv file
+        migration_speed_filepath = Path(output_folder).joinpath(
+            "speed_data",
+            "migration_speed_df_%s_%s_%s.csv" % (
+                row["treatment"],
+                row["color"],
+                row["experimentID"]
+            )
+        )
         migration_speed_df.to_csv(str(migration_speed_filepath), index=False)
 
-        #data = pd.read_csv(tracking_data_path + tracking_file, low_memory=False)
-
-        #data["DELTA_T"] = data["POSITION_T"] - data["POSITION_T"].shift(1)
-        #data["DELTA_X"] = data["POSITION_X"] - data["POSITION_X"].shift(1)
-        #data["DELTA_Y"] = data["POSITION_Y"] - data["POSITION_Y"].shift(1)
-
-        #data["VEL_X"] = data["DELTA_X"] / data["DELTA_T"]
-        #data["VEL_Y"] = data["DELTA_Y"] / data["DELTA_T"]
-
-        #data["VEL"] = np.sqrt(data["VEL_X"] ** 2 + data["VEL_Y"] ** 2)
-
-       # data.to_csv(tracking_data_path + tracking_file, index=False)
-
+        # remove the migration speed dataframe from memory for the next file
         del migration_speed_df
 
     return
