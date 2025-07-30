@@ -9,3 +9,18 @@ plots
 
 # VSCode workspace settings
 .vscode/
+data/test_set_june2025/speed_data/migration_speed_df_siCtrl+highVEGF-Flow_black_D2_rep1.csv
+data/test_set_june2025/speed_data/migration_speed_df_siCtrl+highVEGF-Flow_black_E7_rep2.csv
+data/test_set_june2025/speed_data/migration_speed_df_siCtrl+highVEGF-Stat_black_D1_rep1.csv
+data/test_set_june2025/speed_data/migration_speed_df_siGENOMEsiKank1+lowVEGF-Flow_black_G1_rep1.csv
+data/test_set_june2025/time_corrected_test_set/timecorrected_Chan1-ltorrotated-resized-D1_spots.csv
+data/test_set_june2025/time_corrected_test_set/timecorrected_Chan1-ltorrotated-resized-D2_spots.csv
+data/test_set_june2025/time_corrected_test_set/timecorrected_Chan1-ltorrotated-resized-E7_flow-up_spots.csv
+data/test_set_june2025/time_corrected_test_set/timecorrected_Chan1-ltorrotated-resized-G1_flow_up_spots.csv
+data/test_set_june2025/tracking_data/tracking_data_siCtrl+highVEGF-Flow_black_D2_rep1.csv
+data/test_set_june2025/tracking_data/tracking_data_siCtrl+highVEGF-Flow_black_E7_rep2.csv
+data/test_set_june2025/tracking_data/tracking_data_siCtrl+highVEGF-Stat_black_D1_rep1.csv
+data/test_set_june2025/tracking_data/tracking_data_siGENOMEsiKank1+lowVEGF-Flow_black_G1_rep1.csv
+data/test_set_june2025/key_test_set.csv
+data/key_test_set.csv
+data/key_test_set.csv
