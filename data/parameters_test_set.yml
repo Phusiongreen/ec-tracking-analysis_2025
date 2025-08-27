@@ -44,14 +44,14 @@ frames_per_hour: 6 # number of frames per hour
 
 # quality control parameters
 
-min_track_length: 12 # minimum track length in frames
+min_track_length: 24 # minimum track length in frames
 
 # plot parameters
 
 ## bootstrap trajectory plots
 
-observation_time: [0, 24] # in frames
-allow_tracks_shorter_than_observation_time: true # if True, tracks shorter than observation_time will be included in the plot
+observation_time: [0, 50] # in frames
+allow_tracks_shorter_than_observation_time: True # if True, tracks shorter than observation_time will be included in the plot
 number_of_tracks_per_file: 100 
 number_of_tracks_per_condition: 300
 
