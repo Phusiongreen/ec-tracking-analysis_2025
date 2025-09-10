@@ -1,7 +1,5 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from pathlib import Path
 
 
@@ -95,65 +93,6 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
         del data
 
     return tracking_data_df
-
-
-def plot_quality_control(parameters, key_file, subfolder="tracking_data"):
-    tracking_data_path = Path(parameters["output_folder"]).joinpath(subfolder)
-
-    for index, row in key_file.iterrows():
-        tracking_file = "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
-        print("Plot quality control for file ", row["filename"])
-        data = pd.read_csv(tracking_data_path.joinpath(tracking_file), low_memory=False)
-
-        # tracking_data_df_ = tracking_data_df[tracking_data_df["filename"] == filename]
-        #fig, ax = plt.subplots(figsize=(20, 10))
-        #sns.scatterplot(data=data, x="FRAME", y="TRACK_ID")
-        #ax.set_title("Experiment ID %s" % row["experimentID"])
-
-        #fig.savefig(
-        #    Path(parameters["output_folder"]).joinpath("quality_control", "quality_control_%s_%s_%s.png" % (
-        #        row["treatment"], row["color"], row["experimentID"]))
-        #)
-
-        #plt.show()
-
-        # The inactive function below is taken from track_analysis.py, which is used to generate the second
-        # quality control plot in the early code(the non numbered notebooks).
-        # It line plots the total number of tracks that are available at the given time point.
-        # It does not discriminate how long the tracks are, but can be used for checking fluorescence loss over time
-        # Ideally to be called during 02_Quality_control, bit more useful than the previous function above imo
-
-        fig, ax = plt.subplots(figsize=(20, 10))
-        data[["FRAME", "TRACK_ID"]].groupby("FRAME").count().plot(ax=ax)
-        ax.set_title(tracking_file)
-
-        ax.set_xlabel("Frame")
-        ax.set_ylabel("Number of tracks having data at this time point")
-
-        fig.savefig(
-            Path(parameters["output_folder"]).joinpath("quality_control", "quality_control2_%s_%s_%s.png" % (
-                row["treatment"], row["color"], row["experimentID"]))
-        )
-
-        plt.show()
-
-
-
-        # show track length distribution
-        fig, ax = plt.subplots(figsize=(10, 10))
-
-        max_frame_pre_track = data[["TRACK_ID", "FRAME"]].groupby("TRACK_ID").max()
-        sns.rugplot(data=max_frame_pre_track, x="FRAME", ax=ax)
-        ax.set_title(tracking_file)
-        ax.set_xlabel("Track length in frames")
-        ax.set_ylabel("Number of tracks")
-
-
-        fig.savefig(
-            Path(parameters["output_folder"]).joinpath("quality_control", "quality_control3_%s_%s_%s.png" % (
-                row["treatment"], row["color"], row["experimentID"]))
-        )
-        plt.show()
 
 
 def compute_speeds(parameters, key_file, subfolder="tracking_data"):
