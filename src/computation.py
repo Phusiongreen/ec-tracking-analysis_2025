@@ -102,6 +102,8 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
     interval = parameters["time_lag"]
     decimal_places = parameters["decimal_places"]
     output_folder = parameters["output_folder"]
+    # New feature flag (defaults to True if missing)
+    variable_initial_lag = bool(parameters.get("variable_initial_lag", True))
 
     tracking_data_path = Path(output_folder).joinpath(subfolder)
 
@@ -129,42 +131,93 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
 
         # iterate over each track ID to compute the speed
         for track_id in tracks_df["TRACK_ID"].unique():
+            # ensure we can safely clean up optional objects
+            dist = None
 
             # extract the single track data
             single_track_df = tracks_df[tracks_df["TRACK_ID"] == track_id]
 
-            # sort by frame
-            single_track_df = single_track_df.sort_values(by="FRAME")
+            # sort by frame and reset positional index
+            single_track_df = single_track_df.sort_values(by="FRAME").reset_index(drop=True)
 
-            # calculate the differences in position and time of "interval" frames
-            dist = single_track_df.diff(interval).fillna(0.)
-            dist["time_in_h"] = dist["POSITION_T"] / 3600.0  # convert time from seconds to hours
-            # step size is the euclidean distance of the position differences
-            single_track_df["step_size"] = np.round(
-                np.sqrt(dist.POSITION_X ** 2 + dist.POSITION_Y ** 2), decimal_places
-            )
-            # calculate the step size in x and y direction
-            single_track_df["step_size_x"] = np.round(dist.POSITION_X, decimal_places)
-            single_track_df["step_size_y"] = np.round(dist.POSITION_Y, decimal_places)
+            # build numpy arrays
+            x = single_track_df["POSITION_X"].to_numpy(dtype=float)
+            y = single_track_df["POSITION_Y"].to_numpy(dtype=float)
+            t_sec = single_track_df["POSITION_T"].to_numpy(dtype=float)
+            t_h = t_sec / 3600.0
 
-            # calculate the velocity in mu per hour
-            single_track_df["vel_mu_per_h"] = np.round(
-                np.sqrt(dist.POSITION_X ** 2 + dist.POSITION_Y ** 2) / dist.time_in_h, decimal_places
-            )
-            single_track_df["vel_x_mu_per_h"] = np.round(dist.POSITION_X / dist.time_in_h, decimal_places)
-            single_track_df["vel_y_mu_per_h"] = np.round(dist.POSITION_Y / dist.time_in_h, decimal_places)
+            if variable_initial_lag:
+                # expanding window for early frames, capped at interval
+                n = x.shape[0]
+                idx = np.arange(n, dtype=int)
+                lag = np.minimum(idx, int(interval))  # 0,1,2,...,interval,interval,...
+                valid_rows = lag > 0
+                i = np.where(valid_rows)[0]
+                # look-back indices for each valid row
+                p = i - lag[i]
 
-            # calculate the direction of the movement in degrees
-            single_track_df["phi"] = np.round(
-                np.arctan2(dist.POSITION_Y, -dist.POSITION_X) * 180.0 / np.pi, decimal_places
-            )
+                # allocate and fill displacement/time arrays
+                dx = np.full(n, np.nan, dtype=float)
+                dy = np.full(n, np.nan, dtype=float)
+                dt_h = np.full(n, np.nan, dtype=float)
 
-            # save metadata
+                dx[i] = x[i] - x[p]
+                dy[i] = y[i] - y[p]
+                dt_h[i] = t_h[i] - t_h[p]
+
+                valid = dt_h > 0
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    step = np.where(valid, np.sqrt(dx**2 + dy**2), np.nan)
+                    vel = np.where(valid, step / dt_h, np.nan)
+                    vel_x = np.where(valid, dx / dt_h, np.nan)
+                    vel_y = np.where(valid, dy / dt_h, np.nan)
+                    phi_deg = np.where(valid, np.degrees(np.arctan2(dy, -dx)), np.nan)
+
+                # assign rounded outputs
+                single_track_df["step_size"] = np.round(step, decimal_places)
+                single_track_df["step_size_x"] = np.round(np.where(valid, dx, np.nan), decimal_places)
+                single_track_df["step_size_y"] = np.round(np.where(valid, dy, np.nan), decimal_places)
+
+                single_track_df["vel_mu_per_h"] = np.round(vel, decimal_places)
+                single_track_df["vel_x_mu_per_h"] = np.round(vel_x, decimal_places)
+                single_track_df["vel_y_mu_per_h"] = np.round(vel_y, decimal_places)
+
+                single_track_df["phi"] = np.round(phi_deg, decimal_places)
+                single_track_df["lag_used"] = lag
+
+            else:
+                # original fixed-lag behavior, but without fillna(0)
+                dist = single_track_df.diff(int(interval))
+                dt_h = dist["POSITION_T"].to_numpy(dtype=float) / 3600.0
+                dx = dist["POSITION_X"].to_numpy(dtype=float)
+                dy = dist["POSITION_Y"].to_numpy(dtype=float)
+
+                valid = dt_h > 0
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    step = np.where(valid, np.sqrt(dx**2 + dy**2), np.nan)
+                    vel = np.where(valid, step / dt_h, np.nan)
+                    vel_x = np.where(valid, dx / dt_h, np.nan)
+                    vel_y = np.where(valid, dy / dt_h, np.nan)
+                    phi_deg = np.where(valid, np.degrees(np.arctan2(dy, -dx)), np.nan)
+
+                single_track_df["step_size"] = np.round(step, decimal_places)
+                single_track_df["step_size_x"] = np.round(np.where(valid, dx, np.nan), decimal_places)
+                single_track_df["step_size_y"] = np.round(np.where(valid, dy, np.nan), decimal_places)
+
+                single_track_df["vel_mu_per_h"] = np.round(vel, decimal_places)
+                single_track_df["vel_x_mu_per_h"] = np.round(vel_x, decimal_places)
+                single_track_df["vel_y_mu_per_h"] = np.round(vel_y, decimal_places)
+
+                single_track_df["phi"] = np.round(phi_deg, decimal_places)
+                single_track_df["lag_used"] = int(interval)
+
+            # metadata
             single_track_df["filename"] = tracking_file
             single_track_df["condition"] = tracks_df_["condition"].iloc[0]
 
-            # convert time from seconds to hours
-            single_track_df["time_in_h"] = np.round(single_track_df["POSITION_T"] / 3600.0, decimal_places)
+            # time columns: absolute hours and relative (start at 0)
+            single_track_df["time_in_h"] = np.round(t_h, decimal_places)
+            single_track_df["time_from_start_h"] = np.round(t_h - t_h[0], decimal_places)
 
             # save current track data to the migration speed dataframe
             if len(migration_speed_df.index) > 1:
@@ -179,7 +232,8 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
 
             # clean up to save memory
             del single_track_df
-            del dist
+            if dist is not None:
+                del dist
 
         # store the migration speed dataframe to a csv file
         migration_speed_filepath = Path(output_folder).joinpath(
