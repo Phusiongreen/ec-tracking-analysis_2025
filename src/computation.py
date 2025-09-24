@@ -250,3 +250,26 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
         del migration_speed_df
 
     return
+
+def gaps_for_track(frames: pd.Series) -> pd.DataFrame:
+    # sorted unique frames for this track
+    arr = np.sort(frames.unique())
+    if arr.size < 2:
+        return pd.DataFrame(columns=['gap_start', 'gap_end', 'gap_length'])
+
+    prev = arr[:-1]
+    curr = arr[1:]
+    gap_mask = (curr - prev) > 1
+
+    if not np.any(gap_mask):
+        return pd.DataFrame(columns=['gap_start', 'gap_end', 'gap_length'])
+
+    starts = prev[gap_mask] + 1
+    ends = curr[gap_mask] - 1
+    lengths = ends - starts + 1
+
+    return pd.DataFrame({
+        'gap_start': starts,
+        'gap_end': ends,
+        'gap_length': lengths
+    })
