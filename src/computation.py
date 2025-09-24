@@ -95,6 +95,180 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
     return tracking_data_df
 
 
+def build_velocity_dataset(
+        parameters: dict,
+        key_file: pd.DataFrame,
+        data_folder: Path,
+        observation_time: tuple,  # (start_frame, end_frame)
+        obs_time_length_frames: int,
+) -> pd.DataFrame:
+    velocity_df = pd.DataFrame(
+        columns=["EXPERIMENT_ID", "CONDITION", "label", "TRACK_ID", "VEL", "VEL_X", "VEL_Y", "DELTA_X", "DELTA_Y",
+                 "START_X", "START_Y", "END_X", "END_Y"])
+    vel_index = 0
+
+    for condition in key_file["condition"].unique():
+        key_select = key_file[key_file["condition"] == condition]
+        for experimentID in key_select["experimentID"].unique():
+
+            key_exp = key_select[key_select["experimentID"] == experimentID]
+
+            for index, row in key_exp.iterrows():
+
+                treatment = row["treatment"]
+
+                tracking_file = "tracking_data_%s_%s_%s.csv" % (treatment, row["color"], row["experimentID"])
+
+                data = pd.read_csv(str(data_folder.joinpath(tracking_file)), low_memory=False)
+
+                print(data["POSITION_X"].min(), data["POSITION_X"].max())
+
+                observation_period_df = data[data["FRAME"] <= observation_time[1]]
+                observation_period_df = observation_period_df[observation_period_df["FRAME"] >= observation_time[0]]
+
+                # Get the first frame of each track
+                tracks_start = observation_period_df[observation_period_df["FRAME"] == observation_time[0]]
+
+                # determine the min end point of the tracks
+                # in case "allow_tracks_shorter_than_observation_time" in the parameters file is set to True
+                # -> the min required track length is the min of 'obs_time_length_frames' and 'min_track_length'
+                # in case "allow_tracks_shorter_than_observation_time" in the parameters file is set to False
+                # -> the end point of each trajectory is the end of the observation time
+
+                frame_end_point = observation_time[1]
+                if parameters["allow_tracks_shorter_than_observation_time"] == True:
+                    if obs_time_length_frames > parameters["min_track_length"]:
+                        frame_end_point = observation_time[0] + parameters["min_track_length"]
+
+                # Assign tracks_end using the determined frame
+                tracks_end = observation_period_df[observation_period_df["FRAME"] == frame_end_point]
+
+                track_ids_start = np.array(tracks_start["TRACK_ID"].unique())
+                track_ids_end = np.array(tracks_end["TRACK_ID"].unique())
+
+                unique_common_track_ids = np.intersect1d(track_ids_start, track_ids_end)
+
+                trackID_list = np.unique(unique_common_track_ids)
+
+                num_tracks = len(trackID_list)
+
+                print("Available tracks: %s" % num_tracks)
+
+                for trackID in trackID_list:
+                    single_track_df = observation_period_df[observation_period_df["TRACK_ID"] == trackID]
+                    start_frame = single_track_df["FRAME"].min()
+                    end_frame = single_track_df["FRAME"].max()
+                    delta_frame = end_frame - start_frame
+
+                    delta_hour = delta_frame / parameters["frames_per_hour"]
+
+                    row_start = single_track_df[single_track_df["FRAME"] == start_frame]
+                    row_end = single_track_df[single_track_df["FRAME"] == end_frame]
+
+                    start_x = np.array(row_start["POSITION_X"])[0]
+                    start_y = np.array(row_start["POSITION_Y"])[0]
+                    end_x = np.array(row_end["POSITION_X"])[0]
+                    end_y = np.array(row_end["POSITION_Y"])[0]
+                    delta_x = end_x - start_x
+                    delta_y = end_y - start_y
+                    delta = np.sqrt(delta_x ** 2 + delta_y ** 2)
+
+                    velocity_df.at[vel_index, "EXPERIMENT_ID"] = experimentID
+                    velocity_df.at[vel_index, "CONDITION"] = condition
+                    velocity_df.at[vel_index, "treatment"] = row["treatment"]
+                    velocity_df.at[vel_index, "filename"] = row["filename"]
+                    velocity_df.at[vel_index, "TRACK_ID"] = trackID
+                    velocity_df.at[vel_index, "label"] = str(trackID) + "_" + row["treatment"]
+                    velocity_df.at[vel_index, "color"] = row["color"]
+                    velocity_df.at[vel_index, "VEL"] = delta / delta_hour
+                    velocity_df.at[vel_index, "VEL_X"] = delta_x / delta_hour
+                    velocity_df.at[vel_index, "VEL_Y"] = delta_y / delta_hour
+                    velocity_df.at[vel_index, "DELTA_X"] = delta_x
+                    velocity_df.at[vel_index, "DELTA_Y"] = delta_y
+                    velocity_df.at[vel_index, "START_X"] = start_x
+                    velocity_df.at[vel_index, "START_Y"] = start_y
+                    velocity_df.at[vel_index, "END_X"] = end_x
+                    velocity_df.at[vel_index, "END_Y"] = end_y
+                    velocity_df.at[vel_index, "ORIENTATION_DEG"] = np.arctan2(delta_y, delta_x) * 180 / np.pi + 180.0
+                    velocity_df.at[vel_index, "ORIENTATION_RAD"] = np.arctan2(delta_y, delta_x) + np.pi
+
+                    vel_index += 1
+
+        velocity_condition_df = velocity_df[velocity_df["CONDITION"] == condition]
+        velocity_condition_df.to_csv(str(output_folder.joinpath(subfolder, "velocity_field_%s.csv" % condition)),
+                                     index=False)
+
+        velocity_df.to_csv(str(output_folder.joinpath(subfolder, "velocity_field.csv")), index=False)
+
+def _filter_tracks(tracking_data, parameters):
+    observation_time = parameters["observation_time"]
+
+    obs_time_length_frames = observation_time[1] - observation_time[0]
+
+    # filter data for observation time
+    observation_period_df = tracking_data[tracking_data["FRAME"] <= observation_time[1]]
+    observation_period_df = observation_period_df[observation_period_df["FRAME"] >= observation_time[0]]
+
+    # Get the first frame of each track
+    tracks_start = observation_period_df[observation_period_df["FRAME"] == observation_time[0]]
+
+    # set the end point of the tracks - must be inside the observation time
+    frame_end_point = observation_time[1]
+    if parameters["allow_tracks_shorter_than_observation_time"] == True:
+        # set minimum required track length
+        if obs_time_length_frames > parameters["min_track_length"]:
+            frame_end_point = observation_time[0] + parameters["min_track_length"]
+
+    # filter data for end point of each track
+    tracks_end = observation_period_df[observation_period_df["FRAME"] == frame_end_point]
+
+    # get track IDs that are present at the start and end of the observation period
+    track_ids_start = np.array(tracks_start["TRACK_ID"].unique())
+    track_ids_end = np.array(tracks_end["TRACK_ID"].unique())
+
+    # find track IDs that are present at both the start and end of the observation period
+    unique_common_track_ids = np.intersect1d(track_ids_start, track_ids_end)
+
+    # list of unique track IDs to be plotted
+    trackID_list = np.unique(unique_common_track_ids)
+
+    return observation_period_df, trackID_list
+
+
+def _calc_rel_vel(observation_period_df, track_id, min_vel_lim, max_vel_lim, max_vel, min_vel, parameters):
+    single_track_df = observation_period_df[observation_period_df["TRACK_ID"] == track_id].copy()
+
+    start_frame = single_track_df["FRAME"].min()
+    end_frame = single_track_df["FRAME"].max()
+    delta_frame = end_frame - start_frame
+
+    delta_hour = delta_frame / parameters["frames_per_hour"]
+
+    row_start = single_track_df[single_track_df["FRAME"] == start_frame]
+    row_end = single_track_df[single_track_df["FRAME"] == end_frame]
+
+    start_x = np.array(row_start["POSITION_X"])[0]
+    start_y = np.array(row_start["POSITION_Y"])[0]
+    end_x = np.array(row_end["POSITION_X"])[0]
+    end_y = np.array(row_end["POSITION_Y"])[0]
+    delta_x = end_x - start_x
+    delta_y = end_y - start_y
+
+    single_track_df["X_from_origin"] = single_track_df["POSITION_X"] - start_x
+    single_track_df["Y_from_origin"] = single_track_df["POSITION_Y"] - start_y
+
+    # relative velocity parallel to flow
+    rel_vel = normalize_speed(delta_x / delta_hour, min_vel_lim, max_vel_lim)
+
+    if delta_x / delta_hour > max_vel:
+        max_vel = delta_x / delta_hour
+    if delta_x / delta_hour < min_vel:
+        min_vel = delta_x / delta_hour
+
+    # return updated max and min velocity parallel to flow
+    return rel_vel, max_vel, min_vel, single_track_df, delta_x, delta_y
+
+
 def compute_speeds(parameters, key_file, subfolder="tracking_data"):
     """ This function computes the migration speed of each track in the tracking data."""
 
@@ -273,3 +447,11 @@ def gaps_for_track(frames: pd.Series) -> pd.DataFrame:
         'gap_end': ends,
         'gap_length': lengths
     })
+
+
+def normalize_speed(vel_x, min_value, max_value):
+    '''
+    normalize the speed values to the range [0,1]
+    '''
+    rel_vel = (vel_x - min_value)/(max_value  - min_value)
+    return rel_vel
