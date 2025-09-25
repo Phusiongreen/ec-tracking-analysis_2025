@@ -1,6 +1,7 @@
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 
 
 def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
@@ -101,11 +102,14 @@ def build_velocity_dataset(
         data_folder: Path,
         observation_time: tuple,  # (start_frame, end_frame)
         obs_time_length_frames: int,
-) -> pd.DataFrame:
+        subfolder="graph_analysis"
+):
     velocity_df = pd.DataFrame(
         columns=["EXPERIMENT_ID", "CONDITION", "label", "TRACK_ID", "VEL", "VEL_X", "VEL_Y", "DELTA_X", "DELTA_Y",
                  "START_X", "START_Y", "END_X", "END_Y"])
     vel_index = 0
+
+    output_folder = Path(parameters["output_folder"])
 
     for condition in key_file["condition"].unique():
         key_select = key_file[key_file["condition"] == condition]
@@ -199,6 +203,7 @@ def build_velocity_dataset(
                                      index=False)
 
         velocity_df.to_csv(str(output_folder.joinpath(subfolder, "velocity_field.csv")), index=False)
+
 
 def _filter_tracks(tracking_data, parameters):
     observation_time = parameters["observation_time"]
@@ -341,7 +346,7 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
 
                 valid = dt_h > 0
                 with np.errstate(divide="ignore", invalid="ignore"):
-                    step = np.where(valid, np.sqrt(dx**2 + dy**2), np.nan)
+                    step = np.where(valid, np.sqrt(dx ** 2 + dy ** 2), np.nan)
                     vel = np.where(valid, step / dt_h, np.nan)
                     vel_x = np.where(valid, dx / dt_h, np.nan)
                     vel_y = np.where(valid, dy / dt_h, np.nan)
@@ -368,7 +373,7 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
 
                 valid = dt_h > 0
                 with np.errstate(divide="ignore", invalid="ignore"):
-                    step = np.where(valid, np.sqrt(dx**2 + dy**2), np.nan)
+                    step = np.where(valid, np.sqrt(dx ** 2 + dy ** 2), np.nan)
                     vel = np.where(valid, step / dt_h, np.nan)
                     vel_x = np.where(valid, dx / dt_h, np.nan)
                     vel_y = np.where(valid, dy / dt_h, np.nan)
@@ -425,6 +430,7 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
 
     return
 
+
 def gaps_for_track(frames: pd.Series) -> pd.DataFrame:
     # sorted unique frames for this track
     arr = np.sort(frames.unique())
@@ -453,5 +459,5 @@ def normalize_speed(vel_x, min_value, max_value):
     '''
     normalize the speed values to the range [0,1]
     '''
-    rel_vel = (vel_x - min_value)/(max_value  - min_value)
+    rel_vel = (vel_x - min_value) / (max_value - min_value)
     return rel_vel
