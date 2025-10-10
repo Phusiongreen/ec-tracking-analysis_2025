@@ -398,6 +398,72 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
             single_track_df["time_in_h"] = np.round(t_h, decimal_places)
             single_track_df["time_from_start_h"] = np.round(t_h - t_h[0], decimal_places)
 
+            # ---------- Effective velocity (net displacement rate using time_from_start_h) ----------
+            elapsed_h = single_track_df["time_from_start_h"].to_numpy(dtype=float)
+            mask_elapsed = elapsed_h > 0
+
+            ox = single_track_df["ORIGIN_X"].to_numpy(dtype=float)
+            oy = single_track_df["ORIGIN_Y"].to_numpy(dtype=float)
+            origin_L = np.hypot(ox, oy)
+
+            single_track_df["eff_vel_mu_per_h"]   = np.round(np.where(mask_elapsed, origin_L / elapsed_h, np.nan), decimal_places)
+            single_track_df["eff_vel_x_mu_per_h"] = np.round(np.where(mask_elapsed, ox       / elapsed_h, np.nan), decimal_places)
+            single_track_df["eff_vel_y_mu_per_h"] = np.round(np.where(mask_elapsed, oy       / elapsed_h, np.nan), decimal_places)
+            # ---------- Directionality ratio d/D over time (frame-to-frame path length) ----------
+            dx1 = np.r_[np.nan, np.diff(x)]
+            dy1 = np.r_[np.nan, np.diff(y)]
+            step1 = np.hypot(dx1, dy1)
+            # cumulative path length; first element NaN (no path yet)
+            path_len = np.cumsum(np.nan_to_num(step1, nan=0.0))
+            path_len[0] = np.nan
+
+            single_track_df["dir_ratio"] = np.round(
+                np.where(path_len > 0, origin_L / path_len, np.nan),
+                decimal_places
+            )
+            
+            # ---------- Rolling 1-hour window metrics ----------
+            # Window size in frames (default: frames_per_hour from parameters; fallback from timestamps)
+            frames_per_hour = int(parameters.get("frames_per_hour", round(1.0 / np.nanmedian(np.diff(t_h)))))
+            W = frames_per_hour
+
+            n = len(x)
+            # frame-to-frame steps already computed above:
+            # dx1 = np.r_[np.nan, np.diff(x)]
+            # dy1 = np.r_[np.nan, np.diff(y)]
+            # step1 = np.hypot(dx1, dy1)
+
+            # Total distance over the last 1 hour (rolling sum of W steps), aligned to current frame
+            total_dist_1h = np.full(n, np.nan, float)
+            if n > W:
+                s = np.cumsum(np.nan_to_num(step1, nan=0.0))
+                total_dist_1h[W:] = s[W:] - s[:-W]
+
+            # Effective displacement over the last 1 hour (vector from t-W to t), aligned to current frame
+            eff_dx_1h = np.full(n, np.nan, float)
+            eff_dy_1h = np.full(n, np.nan, float)
+            if n > W:
+                eff_dx_1h[W:] = x[W:] - x[:-W]
+                eff_dy_1h[W:] = y[W:] - y[:-W]
+            eff_dist_1h = np.hypot(eff_dx_1h, eff_dy_1h)
+
+            # Convert distances to per-hour velocities (window duration = W / frames_per_hour hours)
+            scale = frames_per_hour / float(W)  # = 1.0 if W == frames_per_hour
+            tot_vel_1h = total_dist_1h * scale           # μm/h
+            eff_vel_1h = eff_dist_1h * scale             # μm/h
+            eff_vel_x_1h = eff_dx_1h * scale             # μm/h
+            eff_vel_y_1h = eff_dy_1h * scale             # μm/h
+
+            # Directionality ratio within the 1-hour window
+            with np.errstate(divide="ignore", invalid="ignore"):
+                dir_ratio_1h = np.where(total_dist_1h > 0, eff_dist_1h / total_dist_1h, np.nan)
+
+            # Write rounded columns (NaN for frames < W, matching MATLAB’s j>=13 behavior)
+            single_track_df["tot_vel_1h_mu_per_h"]   = np.round(tot_vel_1h,  decimal_places)
+            single_track_df["eff_vel_1h_mu_per_h"]   = np.round(eff_vel_1h,  decimal_places)
+            single_track_df["eff_vel_1h_x_mu_per_h"] = np.round(eff_vel_x_1h, decimal_places)
+            single_track_df["eff_vel_1h_y_mu_per_h"] = np.round(eff_vel_y_1h, decimal_places)
+            single_track_df["dir_ratio_1h"]          = np.round(dir_ratio_1h, decimal_places)
             # save current track data to the migration speed dataframe
             if len(migration_speed_df.index) > 1:
                 migration_speed_df = pd.concat([migration_speed_df, single_track_df], ignore_index=True)
@@ -427,6 +493,155 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
 
         # remove the migration speed dataframe from memory for the next file
         del migration_speed_df
+
+    return
+
+def compute_direction_autocorrelation(parameters, key_file, subfolder="tracking_data"):
+    """
+    Build direction autocorrelation vs lag for each tracking file.
+    Based on Gorelik & Gautreau, Nat Protoc 2014 (10.1038/nprot.2014.131) 
+
+    Writes one CSV per input file to: <output_folder>/direction_autocorr/direction_autocorr_<treat>_<color>_<exp>.csv
+
+    Columns:
+      - treatment, color, experimentID, filename
+      - lag_frames, lag_h
+      - ac_mean_tracks  : mean of per-track autocorr means (unweighted across tracks)
+      - ac_sem_tracks   : SEM across track means
+      - ac_mean_weighted: mean weighted by number of valid vector-pairs per track
+      - n_tracks_used   : tracks with at least one valid pair at this lag
+      - n_pairs_total   : total valid vector-pairs contributing at this lag
+
+    Tunables (parameters dict):
+      - direction_autocorr_max_lag_frames (int, default 10)
+      - direction_autocorr_sparse_every_n (int, default 1 -> use every frame)
+      - output_folder (Path-like, required)
+    """
+    import os
+    import numpy as np
+    import pandas as pd
+    from pathlib import Path
+
+    # params
+    output_folder = Path(parameters["output_folder"])
+    max_lag = int(parameters.get("direction_autocorr_max_lag_frames", 10))
+    sparse_n = int(parameters.get("direction_autocorr_sparse_every_n", 1))
+    tracking_data_path = output_folder.joinpath(subfolder)
+
+    # ensure out dir
+    out_dir = output_folder.joinpath("direction_autocorr")
+    os.makedirs(out_dir, exist_ok=True)
+
+    for _, row in key_file.iterrows():
+        tracking_file = f"tracking_data_{row['treatment']}_{row['color']}_{row['experimentID']}.csv"
+        print("Compute direction autocorr for file", tracking_file)
+
+        tracks_df_ = pd.read_csv(tracking_data_path.joinpath(tracking_file), low_memory=False)
+        # minimal columns
+        tracks_df = tracks_df_[["TRACK_ID", "POSITION_X", "POSITION_Y", "POSITION_T", "FRAME"]]
+
+        # per-lag accumulators
+        lag_records = []
+        frame_interval_h_all = []
+
+        # process each track
+        track_groups = tracks_df.groupby("TRACK_ID", sort=False)
+        # Cache per-track step vectors after sparsification to avoid recomputing for each lag
+        per_track_vectors = []  # list of dicts with dx_step, dy_step, step_norm, frame_interval_h
+
+        for track_id, g in track_groups:
+            g = g.sort_values("FRAME")
+            x = g["POSITION_X"].to_numpy(dtype=float)[::sparse_n]
+            y = g["POSITION_Y"].to_numpy(dtype=float)[::sparse_n]
+            t_sec = g["POSITION_T"].to_numpy(dtype=float)[::sparse_n]
+            if len(x) < 3:
+                continue  # need at least two step vectors
+
+            t_h = t_sec / 3600.0
+            dt = np.diff(t_h)
+            if dt.size == 0:
+                continue
+            frame_interval_h = float(np.nanmedian(dt))
+            frame_interval_h_all.append(frame_interval_h)
+
+            dx_step = np.diff(x)  # length N-1
+            dy_step = np.diff(y)
+            step_norm = np.hypot(dx_step, dy_step)
+
+            per_track_vectors.append({
+                "dx_step": dx_step,
+                "dy_step": dy_step,
+                "step_norm": step_norm
+            })
+
+        if not per_track_vectors:
+            print("  No usable tracks for autocorrelation in", tracking_file)
+            continue
+
+        # global frame interval to report lag_h (median across tracks)
+        if frame_interval_h_all:
+            frame_interval_h_global = float(np.nanmedian(frame_interval_h_all))
+        else:
+            frame_interval_h_global = np.nan
+
+        # For each lag, compute per-track means, then aggregate across tracks
+        for n in range(1, max(0, max_lag) + 1):
+            track_means = []
+            track_pairs = []
+
+            for vec in per_track_vectors:
+                dx = vec["dx_step"]; dy = vec["dy_step"]; norm = vec["step_norm"]
+                if len(dx) <= n:
+                    continue
+                dot = dx[n:] * dx[:-n] + dy[n:] * dy[:-n]
+                denom = norm[n:] * norm[:-n]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    c = np.where(denom > 0, dot / denom, np.nan)
+                c = c[~np.isnan(c)]
+                if c.size > 0:
+                    track_means.append(float(np.mean(c)))
+                    track_pairs.append(int(c.size))
+
+            if len(track_means) == 0:
+                # nothing at this lag
+                continue
+
+            # aggregate across tracks
+            track_means_arr = np.asarray(track_means, dtype=float)
+            n_tracks = track_means_arr.size
+            ac_mean_tracks = float(np.mean(track_means_arr))
+            ac_sem_tracks = float(np.std(track_means_arr, ddof=1) / np.sqrt(n_tracks)) if n_tracks > 1 else np.nan
+
+            # pairs-weighted mean (optional downstream)
+            n_pairs_total = int(np.sum(track_pairs))
+            if n_pairs_total > 0:
+                weights = np.asarray(track_pairs, dtype=float) / n_pairs_total
+                ac_mean_weighted = float(np.sum(weights * track_means_arr))
+            else:
+                ac_mean_weighted = np.nan
+
+            lag_records.append({
+                "treatment": row["treatment"],
+                "color": row["color"],
+                "experimentID": row["experimentID"],
+                "filename": tracking_file,
+                "lag_frames": n,
+                "lag_h": n * frame_interval_h_global,
+                "ac_mean_tracks": ac_mean_tracks,
+                "ac_sem_tracks": ac_sem_tracks,
+                "ac_mean_weighted": ac_mean_weighted,
+                "n_tracks_used": n_tracks,
+                "n_pairs_total": n_pairs_total
+            })
+
+        # write one CSV per file
+        if lag_records:
+            out_df = pd.DataFrame(lag_records)
+            out_path = out_dir.joinpath(f"direction_autocorr_{row['treatment']}_{row['color']}_{row['experimentID']}.csv")
+            out_df.to_csv(out_path, index=False)
+            print("  Wrote:", out_path)
+        else:
+            print("  No lags produced for", tracking_file)
 
     return
 
