@@ -3,31 +3,35 @@
 
 # In[1]:
 
-
 import os
 import sys
 from pathlib import Path
 
-import numpy as np
-import dabest
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
-import seaborn as sns
 
 sys.path.append("../")
 from src.io import read_parameters
-from griottes import generate_delaunay_graph, plot_2D
-from src.computation import build_velocity_dataset
-import networkx as nx
+from src.graph_analysis import (
+    build_time_graphs,
+    compute_neighbor_lifetimes,
+    compute_neighbor_retention_curve,
+    exponential_decay,
+    compute_relative_neighbor_displacement,
+    compute_velocity_alignment_curves,
+    compute_anisotropic_separation_and_msd,
+)
+from src.node_trajectory_viz import plot_node_trajectory_3d
 
+from scipy.optimize import curve_fit
 
 
 cmap = matplotlib.colormaps["seismic_r"]
 
 
 # In[2]:
-
 
 # read parameters and key file
 
@@ -43,7 +47,6 @@ print("key file conditions:", key_file["condition"].unique())
 
 # In[3]:
 
-
 # create output folder
 
 output_folder = Path(parameters["output_folder"])
@@ -58,21 +61,13 @@ if not os.path.exists(output_folder.joinpath(subfolder)):
 
 # In[4]:
 
-
-# plot paramters
-
-#condition = 'mosaic_siCTRL_siAlk1'
-#condition = 'mosaic_siCTRL_siSMAD4'
-# color = 'red'
-#treatment = 'siAlk1'
-
-#number_of_tracks_per_condition = 1000
+# plot parameters
 
 observation_time = parameters["observation_time"]
 
 # limits for min velocity and max velocity in um/h used for the color map
-min_vel_lim = -20.0 # um/h
-max_vel_lim = 20.0 # um/h
+min_vel_lim = parameters["velocity_colormap_limits"][0]
+max_vel_lim = parameters["velocity_colormap_limits"][1]
 
 # extend in microns of the coordinate system used for plotting, 
 # range is [-max_x, max_x] in x direction and [-max_y, max_y] in y direction
@@ -86,74 +81,23 @@ print("Observation time (frames):", observation_time)
 plot_tracks = False
 plot_arrows = True
 
-distance_threshold = parameters.get("distance_threshold", 50) # um, default value if not specified in parameters
+distance_threshold = parameters["distance_threshold"]
 
 
 # In[5]:
 
-
-num_subsample = 5
+num_subsample = parameters["num_subsample"]
 
 
 # In[6]:
 
-
-graphs = {}
-observation_period_dfs = {}
-# loop over all experiments 
-for experimentID in key_file["experimentID"].unique():
-    print("Processing experiment:", experimentID)
-
-    # can only be one entry
-    key_exp = key_file[key_file["experimentID"] == experimentID]
-
-    row = key_exp.iloc[0]
-    treatment = row["treatment"]
-
-    tracking_file = "tracking_data_%s_%s_%s.csv" % (treatment, row["color"], row["experimentID"])
-    data = pd.read_csv(str(data_folder.joinpath(tracking_file)), low_memory=False)
-
-    # filter data for observation period
-    observation_period_df = data[data["FRAME"] <= observation_time[1]]
-    observation_period_df = observation_period_df[observation_period_df["FRAME"] >= observation_time[0]]
-    observation_period_dfs[experimentID] = observation_period_df
-
-    # rename columns for G_delaunay graph generation
-    observation_period_df_exp = observation_period_df.rename(columns={"POSITION_X": "x", "POSITION_Y": "y"})
-    # add "label" column
-    observation_period_df_exp["label"] = observation_period_df_exp["TRACK_ID"]
-
-    t_graphs = []
-
-    # build G_delaunay graph per point in time
-    for t in range(observation_time[0], observation_time[1]):
-        observation_period_df_exp_id_t = observation_period_df_exp[observation_period_df_exp["FRAME"] == t].reset_index(drop=True)
-
-        #print(observation_period_df_exp_id_t[["FRAME", "TRACK_ID", "label"]].head())
-
-        print("Generating graph at time point %d ..." % t)
-        G_delaunay = generate_delaunay_graph(
-            observation_period_df_exp_id_t[observation_period_df_exp_id_t.columns],
-            descriptors=observation_period_df_exp_id_t.columns,
-            distance=distance_threshold,
-            image_is_2D=True
-        )
-        print("Graph generated!")
-
-        # relabel nodes to TRACK_IDs
-        mapping = {n: G_delaunay.nodes[n]["TRACK_ID"] for n in G_delaunay.nodes}
-        G_delaunay = nx.relabel_nodes(G_delaunay, mapping)
-
-        t_graphs.append(G_delaunay)
-
-    # store graphs for this experiment (using experimentID for now, will map to condition later)
-    graphs[experimentID] = t_graphs
+# Build Delaunay graphs per time point for each experiment
+graphs, observation_period_dfs = build_time_graphs(
+    key_file, data_folder, observation_time, distance_threshold
+)
 
 
-# In[9]:
-
-
-from src.node_trajectory_viz import plot_node_trajectory_3d
+# In[7]:
 
 # Choose a node ID to track (must be a TRACK_ID that exists in your graphs)
 node_to_track = 123  # Replace with your desired node ID
@@ -176,9 +120,9 @@ for condition in key_file["condition"].unique():
         # Generate the visualization
         fig, ax = plot_node_trajectory_3d(
             node_id=node_to_track,
-            graphs=graphs,                    # from previous cell
-            experimentID=experimentID,        # which experiment to visualize
-            observation_time=observation_time, # frame range from parameters
+            graphs=graphs,
+            experimentID=experimentID,
+            observation_time=observation_time,
             figsize=(14, 10),
             node_color='red',
             neighbor_color='lightblue',
@@ -187,85 +131,18 @@ for condition in key_file["condition"].unique():
             show_neighbors=False,
         )
 
+        plt.savefig(output_folder / subfolder / f"node_trajectory_3d_{experimentID}.pdf")
+        plt.savefig(output_folder / subfolder / f"node_trajectory_3d_{experimentID}.png")
         plt.show()
 
 
-# In[8]:
-
-
-neighbor_lifetimes_by_condition = {}
-
-# iterate over conditions
-for condition in key_file["condition"].unique():
-    print(f"\nAnalyzing condition: {condition}")
-    
-    # Get all experiments for this condition
-    experiments_for_condition = key_file[key_file["condition"] == condition]
-    
-    # Aggregate neighbor lifetimes across all experiments in this condition
-    neighbor_lifetimes_all_tracks = {}
-    
-    for _, row in experiments_for_condition.iterrows():
-        experimentID = row["experimentID"]
-        print(f"  Processing experiment: {experimentID}")
-        
-        if experimentID not in observation_period_dfs:
-            print(f"    Skipping - no data for {experimentID}")
-            continue
-        
-        observation_period_df = observation_period_dfs[experimentID]
-        
-        if experimentID not in graphs:
-            print(f"    Skipping - no graphs for {experimentID}")
-            continue
-        
-        # get time graphs for this experiment
-        t_graphs = graphs[experimentID]
-        
-        # iterate over sampled tracks
-        trackIDs = observation_period_df["TRACK_ID"].unique()
-        
-        for track_id in trackIDs:
-            neighbor_lifetimes = {}
-
-            # first time point
-            t_graphs0 = t_graphs[0]
-
-            if track_id not in t_graphs0.nodes(data="TRACK_ID"):
-                continue
-
-            neighbors0 = list(t_graphs0.neighbors(track_id))
-
-            for neighbor in neighbors0:
-                neighbor_lifetimes[neighbor] = 1  # initialize lifetimes at time 0
-
-            # iterate over rest of time points
-            for t, G_delaunay in enumerate(t_graphs[1:], start=1):
-
-                # iterate
-                node_track = [n for n, d in G_delaunay.nodes(data=True) if d.get("TRACK_ID") == track_id]
-                if len(node_track) > 1:
-                    continue
-                elif len(node_track) == 0:
-                    break
-
-                a = node_track[0]
-                neighbors_t = G_delaunay[a]
-
-                # increment lifetime count for each observed neighbor
-                for neighbor in neighbors_t:
-                    if neighbor in neighbor_lifetimes:
-                        # increment only if consecutive
-                        if neighbor_lifetimes[neighbor] == t:
-                            neighbor_lifetimes[neighbor] += 1
-
-            neighbor_lifetimes_all_tracks[track_id] = neighbor_lifetimes
-    
-    neighbor_lifetimes_by_condition[condition] = neighbor_lifetimes_all_tracks
+# Compute neighbor lifetimes per condition
+neighbor_lifetimes_by_condition = compute_neighbor_lifetimes(
+    graphs, observation_period_dfs, key_file
+)
 
 
 # In[9]:
-
 
 # randomly sample some tracks and plot histograms of neighbor lifetimes
 for condition in key_file["condition"].unique():
@@ -297,10 +174,9 @@ for condition in key_file["condition"].unique():
         plt.title(f'Neighbor Lifetime Histogram for Track ID {track_id} (Condition: {condition})')
         plt.xticks(range(1, obs_time_length_frames + 1))
         plt.grid(axis='y')
+        plt.savefig(output_folder / subfolder / f"neighbor_lifetime_hist_{condition}_track{track_id}.pdf")
+        plt.savefig(output_folder / subfolder / f"neighbor_lifetime_hist_{condition}_track{track_id}.png")
         plt.show()
-
-
-# In[10]:
 
 
 # summary stats of neighbor lifetimes across all tracks
@@ -346,130 +222,18 @@ for ax, condition in zip(axes, conditions):
         ax.set_visible(False)
 
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "neighbor_lifetime_summary.pdf")
+plt.savefig(output_folder / subfolder / "neighbor_lifetime_summary.png")
 plt.show()
 
 
 # In[11]:
 
-
-# Compute neighbor retention/survival curve Sn(tau)
-# Sn(τ) = ⟨|Ni(t0) ∩ Ni(t0+τ)| / |Ni(t0)|⟩ for all i,t0
-# This quantifies what fraction of original neighbors are retained after time tau
-
-def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time):
-    """
-    Compute the neighbor retention/survival curve for each condition.
-    
-    For each time lag τ, computes the fraction of neighbors that persist.
-    
-    Parameters:
-    -----------
-    graphs_dict : dict
-        Dictionary mapping experimentID to list of graphs (one per timepoint)
-    key_file : pd.DataFrame
-        Key file with experimentID and condition information
-    observation_time : tuple
-        (start_frame, end_frame)
-    
-    Returns:
-    --------
-    survival_curves : dict
-        Dictionary mapping condition to dict with:
-        - 'tau': array of time lags (in frames)
-        - 'Sn': array of retention fractions for each tau
-        - 'Sn_std': standard deviation of retention fractions
-        - 'N_measurements': number of (track, t0) pairs averaged
-    """
-    start_frame, end_frame = observation_time
-    max_tau = end_frame - start_frame - 1  # maximum possible tau
-    
-    survival_curves = {}
-    
-    for condition in key_file["condition"].unique():
-        print(f"\nComputing neighbor retention curve for condition: {condition}")
-        
-        # Get all experiments for this condition
-        experiments_for_condition = key_file[key_file["condition"] == condition]
-        
-        # Dictionary to store retention fractions for each tau
-        retention_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-        
-        # Iterate over all experiments in this condition
-        for _, row in experiments_for_condition.iterrows():
-            experimentID = row["experimentID"]
-            
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} - no graphs")
-                continue
-            
-            t_graphs = graphs_dict[experimentID]
-            
-            # Iterate over all starting timepoints (t0)
-            for t0_idx in range(len(t_graphs) - 1):  # -1 because we need at least one future timepoint
-                G_t0 = t_graphs[t0_idx]
-                
-                # For each node in the graph at t0
-                for node_id in G_t0.nodes():
-                    neighbors_t0 = set(G_t0.neighbors(node_id))
-                    
-                    # Skip if node has no neighbors
-                    if len(neighbors_t0) == 0:
-                        continue
-                    
-                    # For each future timepoint (t0 + tau)
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
-                            break
-                        
-                        G_t = t_graphs[t_idx]
-                        
-                        # Check if node still exists at this future timepoint
-                        if node_id not in G_t.nodes():
-                            continue
-                        
-                        # Get neighbors at future timepoint
-                        neighbors_t = set(G_t.neighbors(node_id))
-                        
-                        # Compute retention: intersection / original size
-                        intersection_size = len(neighbors_t0 & neighbors_t)
-                        retention_fraction = intersection_size / len(neighbors_t0)
-                        
-                        retention_by_tau[tau].append(retention_fraction)
-        
-        # Compute mean and std for each tau
-        tau_values = []
-        Sn_values = []
-        Sn_std_values = []
-        N_measurements_values = []
-        
-        for tau in sorted(retention_by_tau.keys()):
-            if len(retention_by_tau[tau]) > 0:
-                tau_values.append(tau)
-                Sn_values.append(np.mean(retention_by_tau[tau]))
-                Sn_std_values.append(np.std(retention_by_tau[tau]))
-                N_measurements_values.append(len(retention_by_tau[tau]))
-        
-        survival_curves[condition] = {
-            'tau': np.array(tau_values),
-            'Sn': np.array(Sn_values),
-            'Sn_std': np.array(Sn_std_values),
-            'N_measurements': np.array(N_measurements_values)
-        }
-        
-        print(f"  Computed retention curve with {len(tau_values)} time points")
-        if len(N_measurements_values) > 0:
-            print(f"  Average measurements per time point: {np.mean(N_measurements_values):.0f}")
-    
-    return survival_curves
-
-
-# Compute the survival curves
+# Compute the neighbor retention / survival curves
 survival_curves = compute_neighbor_retention_curve(graphs, key_file, observation_time)
 
 
 # In[12]:
-
 
 # Plot neighbor retention curves for all conditions
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -490,20 +254,14 @@ ax.set_ylim([0, 1.05])
 ax.grid(True, alpha=0.3, linestyle='--')
 ax.legend(fontsize=10)
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "neighbor_retention_curves.pdf")
+plt.savefig(output_folder / subfolder / "neighbor_retention_curves.png")
 plt.show()
 
 
 # In[13]:
 
-
 # Fit exponential decay to retention curves and extract half-life
-from scipy.optimize import curve_fit
-
-def exponential_decay(tau, S0, k):
-    """
-    Exponential decay model: S(τ) = S0 * exp(-k*τ)
-    """
-    return S0 * np.exp(-k * tau)
 
 retention_analysis = {}
 
@@ -562,7 +320,6 @@ for condition in key_file["condition"].unique():
 
 # In[14]:
 
-
 # Plot retention curves with exponential fits
 fig, axes = plt.subplots(1, len(key_file["condition"].unique()), 
                           figsize=(6 * len(key_file["condition"].unique()), 5))
@@ -600,11 +357,12 @@ for ax, condition in zip(axes, key_file["condition"].unique()):
     ax.legend(fontsize=10)
 
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "retention_curves_with_fits.pdf")
+plt.savefig(output_folder / subfolder / "retention_curves_with_fits.png")
 plt.show()
 
 
 # In[15]:
-
 
 # Summary table of retention metrics
 print("\n" + "="*70)
@@ -640,112 +398,13 @@ print(summary_df.to_string(index=False))
 print("="*70)
 
 
-# In[ ]:
+# In[16]:
 
-
-# Relative neighbor separation / cage-relative displacement
-# For each initial neighbor pair (i,j) at time t0, compute the change in relative displacement:
-#   δr_ij(τ) = |[r_i(t0+τ) - r_j(t0+τ)] - [r_i(t0) - r_j(t0)]|
-# Small δr means neighbors move as a pack (collective); large δr means they shear apart.
-
-def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_time):
-    """
-    Compute the cage-relative displacement curve for each condition.
-    
-    For each initial neighbor pair (i,j) at time t0, tracks how the relative
-    separation vector changes over time lag τ compared to the initial spacing.
-    
-    Returns a dict mapping condition -> {'tau', 'delta_r_mean', 'delta_r_std',
-    'delta_r_sem', 'N_pairs'}.
-    """
-    start_frame, end_frame = observation_time
-    max_tau = end_frame - start_frame - 1
-
-    displacement_curves = {}
-
-    for condition in key_file["condition"].unique():
-        print(f"\nComputing relative neighbor displacement for condition: {condition}")
-
-        experiments_for_condition = key_file[key_file["condition"] == condition]
-
-        # Collect δr values per τ across all experiments, t0, and pairs
-        delta_r_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-
-        for _, row in experiments_for_condition.iterrows():
-            experimentID = row["experimentID"]
-
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} – no graphs")
-                continue
-
-            t_graphs = graphs_dict[experimentID]
-
-            # Iterate over starting time indices t0
-            for t0_idx in range(len(t_graphs) - 1):
-                G_t0 = t_graphs[t0_idx]
-
-                # For every edge (i, j) at t0
-                for i, j in G_t0.edges():
-                    # Initial positions
-                    ri_t0 = np.array([G_t0.nodes[i]["x"], G_t0.nodes[i]["y"]])
-                    rj_t0 = np.array([G_t0.nodes[j]["x"], G_t0.nodes[j]["y"]])
-                    d_ij_t0 = ri_t0 - rj_t0  # initial relative vector
-
-                    # Track over future lags
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
-                            break
-
-                        G_t = t_graphs[t_idx]
-
-                        # Both nodes must still exist at t0+τ
-                        if i not in G_t.nodes() or j not in G_t.nodes():
-                            continue
-
-                        ri_t = np.array([G_t.nodes[i]["x"], G_t.nodes[i]["y"]])
-                        rj_t = np.array([G_t.nodes[j]["x"], G_t.nodes[j]["y"]])
-                        d_ij_t = ri_t - rj_t  # relative vector at t0+τ
-
-                        # Cage-relative displacement
-                        delta_r = np.linalg.norm(d_ij_t - d_ij_t0)
-                        delta_r_by_tau[tau].append(delta_r)
-
-        # Aggregate statistics per τ
-        tau_values = []
-        mean_values = []
-        std_values = []
-        sem_values = []
-        n_pairs_values = []
-
-        for tau in sorted(delta_r_by_tau.keys()):
-            vals = delta_r_by_tau[tau]
-            if len(vals) > 0:
-                tau_values.append(tau)
-                mean_values.append(np.mean(vals))
-                std_values.append(np.std(vals))
-                sem_values.append(np.std(vals) / np.sqrt(len(vals)))
-                n_pairs_values.append(len(vals))
-
-        displacement_curves[condition] = {
-            "tau": np.array(tau_values),
-            "delta_r_mean": np.array(mean_values),
-            "delta_r_std": np.array(std_values),
-            "delta_r_sem": np.array(sem_values),
-            "N_pairs": np.array(n_pairs_values),
-        }
-
-        print(f"  {len(tau_values)} τ-points, "
-              f"avg {np.mean(n_pairs_values):.0f} pairs per τ" if len(n_pairs_values) else "")
-
-    return displacement_curves
-
-
+# Compute cage-relative neighbor displacement curves
 displacement_curves = compute_relative_neighbor_displacement(graphs, key_file, observation_time)
 
 
-# In[ ]:
-
+# In[17]:
 
 # Plot cage-relative displacement ⟨δr(τ)⟩ for all conditions
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -765,10 +424,17 @@ ax.set_title("Cage-Relative Neighbor Displacement", fontsize=13, fontweight="bol
 ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3, linestyle="--")
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "cage_relative_displacement.pdf")
+plt.savefig(output_folder / subfolder / "cage_relative_displacement.png")
 plt.show()
 
 
 # In[ ]:
+
+# neighborhood consistency as a heatmap (tracks × time) to identify locally unstable areas
+
+
+# In[18]:
 
 
 # Per-condition subplots: mean ± std (shaded) with pair counts annotated
@@ -794,10 +460,12 @@ for ax, condition in zip(axes, conditions):
     ax.legend(fontsize=9)
 
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "cage_relative_displacement_per_condition.pdf")
+plt.savefig(output_folder / subfolder / "cage_relative_displacement_per_condition.png")
 plt.show()
 
 
-# In[ ]:
+# In[19]:
 
 
 # Summary table of cage-relative displacement metrics
@@ -836,165 +504,19 @@ print(summary_disp_df.to_string(index=False))
 print("=" * 80)
 
 
-# In[ ]:
+# In[20]:
 
-
-# ---------------------------------------------------------------------------
-# Neighbor velocity alignment correlation  C_align(τ)
-# ---------------------------------------------------------------------------
-# For every initial neighbor pair (i, j) at time t0 we compute:
-#
-#   C_align(τ) = ⟨ v̂_i(t0) · v̂_j(t0 + τ) ⟩          (cross-time)
-#   A(τ=0)     = ⟨ v̂_i(t0) · v̂_j(t0) ⟩                (same-time)
-#
-# Velocities are estimated as  v_i(t) = r_i(t+1) − r_i(t)  from the graphs.
-# We report both *normalized* (unit-vector) and *unnormalized* correlations.
-
-def _node_velocity(graphs_list, node_id, t_idx):
-    """Return velocity vector of *node_id* at frame index *t_idx*.
-
-    Velocity is the displacement to the next frame:  v(t) = r(t+1) − r(t).
-    Returns None if the node is missing at t or t+1.
-    """
-    if t_idx + 1 >= len(graphs_list):
-        return None
-    G0 = graphs_list[t_idx]
-    G1 = graphs_list[t_idx + 1]
-    if node_id not in G0.nodes() or node_id not in G1.nodes():
-        return None
-    r0 = np.array([G0.nodes[node_id]["x"], G0.nodes[node_id]["y"]])
-    r1 = np.array([G1.nodes[node_id]["x"], G1.nodes[node_id]["y"]])
-    return r1 - r0
-
-
-def _unit(v):
-    """Return the unit vector.  Returns None for zero-length vectors."""
-    n = np.linalg.norm(v)
-    if n < 1e-12:
-        return None
-    return v / n
-
-
-def compute_velocity_alignment_curves(graphs_dict, key_file, observation_time,
-                                       use_unnormalized=False):
-    """Compute neighbor velocity alignment C_align(τ) for each condition.
-
-    Parameters
-    ----------
-    graphs_dict : dict
-        experimentID -> list of nx.Graph (one per frame).
-    key_file : pd.DataFrame
-        Must contain 'experimentID' and 'condition' columns.
-    observation_time : tuple (start_frame, end_frame)
-    use_unnormalized : bool
-        If True, use raw velocity dot-products (speed matters).
-        If False (default), use unit-vector dot-products (pure alignment).
-
-    Returns
-    -------
-    alignment_curves : dict
-        condition -> {'tau', 'C_mean', 'C_std', 'C_sem', 'N_pairs'}
-    """
-    start_frame, end_frame = observation_time
-    max_tau = end_frame - start_frame - 2  # need one extra frame to compute v
-
-    alignment_curves = {}
-
-    for condition in key_file["condition"].unique():
-        print(f"\nComputing velocity alignment for condition: {condition}")
-
-        experiments = key_file[key_file["condition"] == condition]
-
-        dot_by_tau = {tau: [] for tau in range(0, max_tau + 1)}  # τ=0 included
-
-        for _, row in experiments.iterrows():
-            experimentID = row["experimentID"]
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} – no graphs")
-                continue
-
-            t_graphs = graphs_dict[experimentID]
-
-            # Pre-compute velocities for all nodes at all valid time indices
-            # t_idx ranges over [0 .. len-2] (need t+1 for displacement)
-            vel_cache = {}  # (node_id, t_idx) -> velocity vector | None
-            for t_idx in range(len(t_graphs) - 1):
-                G = t_graphs[t_idx]
-                for nid in G.nodes():
-                    vel_cache[(nid, t_idx)] = _node_velocity(t_graphs, nid, t_idx)
-
-            # Iterate over starting time indices t0
-            for t0_idx in range(len(t_graphs) - 1):
-                G_t0 = t_graphs[t0_idx]
-
-                for i, j in G_t0.edges():
-                    vi = vel_cache.get((i, t0_idx))
-                    if vi is None:
-                        continue
-
-                    if not use_unnormalized:
-                        vi_use = _unit(vi)
-                        if vi_use is None:
-                            continue
-                    else:
-                        vi_use = vi
-
-                    # For each lag τ (including τ=0 = same-time alignment)
-                    for tau in range(0, max_tau + 1):
-                        tj_idx = t0_idx + tau
-                        if tj_idx >= len(t_graphs) - 1:
-                            break
-
-                        vj = vel_cache.get((j, tj_idx))
-                        if vj is None:
-                            continue
-
-                        if not use_unnormalized:
-                            vj_use = _unit(vj)
-                            if vj_use is None:
-                                continue
-                        else:
-                            vj_use = vj
-
-                        dot_by_tau[tau].append(np.dot(vi_use, vj_use))
-
-        # Aggregate
-        tau_vals, mean_vals, std_vals, sem_vals, n_vals = [], [], [], [], []
-        for tau in sorted(dot_by_tau.keys()):
-            vals = dot_by_tau[tau]
-            if len(vals) > 0:
-                tau_vals.append(tau)
-                mean_vals.append(np.mean(vals))
-                std_vals.append(np.std(vals))
-                sem_vals.append(np.std(vals) / np.sqrt(len(vals)))
-                n_vals.append(len(vals))
-
-        alignment_curves[condition] = {
-            "tau": np.array(tau_vals),
-            "C_mean": np.array(mean_vals),
-            "C_std": np.array(std_vals),
-            "C_sem": np.array(sem_vals),
-            "N_pairs": np.array(n_vals),
-        }
-
-        print(f"  {len(tau_vals)} τ-points, "
-              f"avg {np.mean(n_vals):.0f} pairs per τ" if n_vals else "")
-
-    return alignment_curves
-
-
-# Compute alignment curves (normalized – pure directional alignment)
+# Compute velocity alignment curves (normalized and unnormalized)
 alignment_curves_norm = compute_velocity_alignment_curves(
     graphs, key_file, observation_time, use_unnormalized=False
 )
 
-# Compute alignment curves (unnormalized – speed-weighted)
 alignment_curves_unnorm = compute_velocity_alignment_curves(
     graphs, key_file, observation_time, use_unnormalized=True
 )
 
 
-# In[ ]:
+# In[21]:
 
 
 # Plot normalized velocity alignment  C_align(τ)  for all conditions
@@ -1016,10 +538,13 @@ ax.set_title("Neighbor Velocity Alignment – Normalized", fontsize=13, fontweig
 ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3, linestyle="--")
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "velocity_alignment_normalized.pdf")
+plt.savefig(output_folder / subfolder / "velocity_alignment_normalized.png")
 plt.show()
 
 
-# In[ ]:
+
+# In[22]:
 
 
 # Plot unnormalized (speed-weighted) velocity alignment for all conditions
@@ -1043,10 +568,12 @@ ax.set_title("Neighbor Velocity Alignment – Unnormalized (speed-weighted)",
 ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3, linestyle="--")
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "velocity_alignment_unnormalized.pdf")
+plt.savefig(output_folder / subfolder / "velocity_alignment_unnormalized.png")
 plt.show()
 
 
-# In[ ]:
+# In[23]:
 
 
 # Per-condition subplots: normalized alignment  ±  1 std
@@ -1073,18 +600,14 @@ for ax, condition in zip(axes, conditions):
     ax.legend(fontsize=9)
 
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "velocity_alignment_normalized_per_condition.pdf")
+plt.savefig(output_folder / subfolder / "velocity_alignment_normalized_per_condition.png")
 plt.show()
 
 
-# In[ ]:
-
+# In[24]:
 
 # Fit exponential decay to alignment curves and extract decorrelation time
-from scipy.optimize import curve_fit
-
-def alignment_decay(tau, C0, k):
-    """Exponential decay: C(τ) = C0 * exp(-k * τ)"""
-    return C0 * np.exp(-k * tau)
 
 alignment_fit_results = {}
 
@@ -1105,7 +628,7 @@ for condition in key_file["condition"].unique():
 
     try:
         popt, pcov = curve_fit(
-            alignment_decay,
+            exponential_decay,
             tau[mask], C[mask],
             p0=[C[0], 0.1],
             sigma=C_std[mask] + 1e-8,
@@ -1139,7 +662,8 @@ for condition in key_file["condition"].unique():
         alignment_fit_results[condition] = {"fit_success": False}
 
 
-# In[ ]:
+# In[25]:
+
 
 
 # Plot alignment curves with exponential fits overlaid
@@ -1162,7 +686,7 @@ for ax, condition in zip(axes, conditions):
     res = alignment_fit_results[condition]
     if res.get("fit_success"):
         tau_smooth = np.linspace(tau[0], tau[-1], 200)
-        C_fit = alignment_decay(tau_smooth, res["C0"], res["k"])
+        C_fit = exponential_decay(tau_smooth, res["C0"], res["k"])
         ax.plot(tau_smooth, C_fit, "r-", linewidth=2.5,
                 label=f"Fit (τ_d={res['tau_d']:.1f} f)")
 
@@ -1174,10 +698,12 @@ for ax, condition in zip(axes, conditions):
     ax.legend(fontsize=10)
 
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "velocity_alignment_with_fits.pdf")
+plt.savefig(output_folder / subfolder / "velocity_alignment_with_fits.png")
 plt.show()
 
 
-# In[ ]:
+# In[26]:
 
 
 # Summary table of velocity alignment metrics
@@ -1223,197 +749,16 @@ print(summary_align_df.to_string(index=False))
 print("=" * 80)
 
 
-# In[ ]:
 
+# In[27]:
 
-# ---------------------------------------------------------------------------
-# Pairwise separation decomposed relative to flow  +  anisotropic self-MSD
-# ---------------------------------------------------------------------------
-# Flow direction is taken as x (parallel) and y as perpendicular.
-#
-# 1. Pair separation components for initial neighbor pair (i,j) at t0:
-#      δx_ij(τ) = [x_i(t0+τ) - x_j(t0+τ)] - [x_i(t0) - x_j(t0)]
-#      δy_ij(τ) = [y_i(t0+τ) - y_j(t0+τ)] - [y_i(t0) - y_j(t0)]
-#
-# 2. Self-MSD components for each cell i:
-#      MSD_∥(τ) = ⟨[x_i(t+τ) - x_i(t)]²⟩
-#      MSD_⊥(τ) = ⟨[y_i(t+τ) - y_i(t)]²⟩
-
-def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_time):
-    """
-    Compute flow-decomposed pairwise separation and single-cell MSD.
-
-    Parameters
-    ----------
-    graphs_dict : dict
-        experimentID -> list of nx.Graph (one per frame).
-    key_file : pd.DataFrame
-        Must contain 'experimentID' and 'condition' columns.
-    observation_time : tuple (start_frame, end_frame)
-
-    Returns
-    -------
-    pair_sep : dict
-        condition -> {'tau', 'dx2_mean', 'dx2_std', 'dx2_sem',
-                       'dy2_mean', 'dy2_std', 'dy2_sem', 'N_pairs'}
-    msd_aniso : dict
-        condition -> {'tau', 'msd_par_mean', 'msd_par_std', 'msd_par_sem',
-                       'msd_perp_mean', 'msd_perp_std', 'msd_perp_sem', 'N_cells'}
-    """
-    start_frame, end_frame = observation_time
-    max_tau = end_frame - start_frame - 1
-
-    pair_sep = {}
-    msd_aniso = {}
-
-    for condition in key_file["condition"].unique():
-        print(f"\nComputing anisotropic metrics for condition: {condition}")
-
-        experiments = key_file[key_file["condition"] == condition]
-
-        # Accumulators  ------------------------------------------------
-        # Pair separation change squared, per τ
-        dx2_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-        dy2_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-
-        # Single-cell MSD components, per τ
-        msd_par_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-        msd_perp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-
-        for _, row in experiments.iterrows():
-            experimentID = row["experimentID"]
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} – no graphs")
-                continue
-
-            t_graphs = graphs_dict[experimentID]
-
-            # --- Pair separation components ---
-            for t0_idx in range(len(t_graphs) - 1):
-                G_t0 = t_graphs[t0_idx]
-
-                for i, j in G_t0.edges():
-                    xi_t0 = G_t0.nodes[i]["x"]
-                    yi_t0 = G_t0.nodes[i]["y"]
-                    xj_t0 = G_t0.nodes[j]["x"]
-                    yj_t0 = G_t0.nodes[j]["y"]
-
-                    sep_x_t0 = xi_t0 - xj_t0
-                    sep_y_t0 = yi_t0 - yj_t0
-
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
-                            break
-                        G_t = t_graphs[t_idx]
-
-                        if i not in G_t.nodes() or j not in G_t.nodes():
-                            continue
-
-                        xi_t = G_t.nodes[i]["x"]
-                        yi_t = G_t.nodes[i]["y"]
-                        xj_t = G_t.nodes[j]["x"]
-                        yj_t = G_t.nodes[j]["y"]
-
-                        dx = (xi_t - xj_t) - sep_x_t0
-                        dy = (yi_t - yj_t) - sep_y_t0
-
-                        dx2_by_tau[tau].append(dx ** 2)
-                        dy2_by_tau[tau].append(dy ** 2)
-
-            # --- Self-MSD components ---
-            for t0_idx in range(len(t_graphs)):
-                G_t0 = t_graphs[t0_idx]
-
-                for nid in G_t0.nodes():
-                    x0 = G_t0.nodes[nid]["x"]
-                    y0 = G_t0.nodes[nid]["y"]
-
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
-                            break
-                        G_t = t_graphs[t_idx]
-
-                        if nid not in G_t.nodes():
-                            continue
-
-                        dx_self = G_t.nodes[nid]["x"] - x0
-                        dy_self = G_t.nodes[nid]["y"] - y0
-
-                        msd_par_by_tau[tau].append(dx_self ** 2)
-                        msd_perp_by_tau[tau].append(dy_self ** 2)
-
-        # --- Aggregate pair separation ---
-        tau_vals_p, dx2_m, dx2_s, dx2_se, dy2_m, dy2_s, dy2_se, n_pairs = (
-            [], [], [], [], [], [], [], []
-        )
-        for tau in sorted(dx2_by_tau.keys()):
-            vx = dx2_by_tau[tau]
-            vy = dy2_by_tau[tau]
-            if len(vx) > 0:
-                tau_vals_p.append(tau)
-                dx2_m.append(np.mean(vx))
-                dx2_s.append(np.std(vx))
-                dx2_se.append(np.std(vx) / np.sqrt(len(vx)))
-                dy2_m.append(np.mean(vy))
-                dy2_s.append(np.std(vy))
-                dy2_se.append(np.std(vy) / np.sqrt(len(vy)))
-                n_pairs.append(len(vx))
-
-        pair_sep[condition] = {
-            "tau": np.array(tau_vals_p),
-            "dx2_mean": np.array(dx2_m),
-            "dx2_std": np.array(dx2_s),
-            "dx2_sem": np.array(dx2_se),
-            "dy2_mean": np.array(dy2_m),
-            "dy2_std": np.array(dy2_s),
-            "dy2_sem": np.array(dy2_se),
-            "N_pairs": np.array(n_pairs),
-        }
-
-        # --- Aggregate self-MSD ---
-        tau_vals_m, mp_m, mp_s, mp_se, mr_m, mr_s, mr_se, n_cells = (
-            [], [], [], [], [], [], [], []
-        )
-        for tau in sorted(msd_par_by_tau.keys()):
-            vp = msd_par_by_tau[tau]
-            vr = msd_perp_by_tau[tau]
-            if len(vp) > 0:
-                tau_vals_m.append(tau)
-                mp_m.append(np.mean(vp))
-                mp_s.append(np.std(vp))
-                mp_se.append(np.std(vp) / np.sqrt(len(vp)))
-                mr_m.append(np.mean(vr))
-                mr_s.append(np.std(vr))
-                mr_se.append(np.std(vr) / np.sqrt(len(vr)))
-                n_cells.append(len(vp))
-
-        msd_aniso[condition] = {
-            "tau": np.array(tau_vals_m),
-            "msd_par_mean": np.array(mp_m),
-            "msd_par_std": np.array(mp_s),
-            "msd_par_sem": np.array(mp_se),
-            "msd_perp_mean": np.array(mr_m),
-            "msd_perp_std": np.array(mr_s),
-            "msd_perp_sem": np.array(mr_se),
-            "N_cells": np.array(n_cells),
-        }
-
-        print(f"  Pair sep: {len(tau_vals_p)} τ-points, "
-              f"avg {np.mean(n_pairs):.0f} pairs/τ" if n_pairs else "")
-        print(f"  Self-MSD: {len(tau_vals_m)} τ-points, "
-              f"avg {np.mean(n_cells):.0f} cells/τ" if n_cells else "")
-
-    return pair_sep, msd_aniso
-
-
+# Compute flow-decomposed anisotropic separation and MSD
 pair_sep_curves, msd_aniso_curves = compute_anisotropic_separation_and_msd(
     graphs, key_file, observation_time
 )
 
 
-# In[ ]:
+# In[28]:
 
 
 # ---- Plot 1: Pairwise separation ⟨δx²⟩ and ⟨δy²⟩ overlay ----
@@ -1440,10 +785,12 @@ ax.set_title("Pairwise Neighbor Separation – Flow-Decomposed", fontsize=13, fo
 ax.legend(fontsize=9)
 ax.grid(True, alpha=0.3, linestyle="--")
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "pairwise_separation_flow_decomposed.pdf")
+plt.savefig(output_folder / subfolder / "pairwise_separation_flow_decomposed.png")
 plt.show()
 
 
-# In[ ]:
+# In[29]:
 
 
 # ---- Plot 2: Per-condition subplots of pairwise separation ----
@@ -1473,10 +820,12 @@ for ax, condition in zip(axes, conditions):
     ax.legend(fontsize=9)
 
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "pairwise_separation_per_condition.pdf")
+plt.savefig(output_folder / subfolder / "pairwise_separation_per_condition.png")
 plt.show()
 
 
-# In[ ]:
+# In[30]:
 
 
 # ---- Plot 3: Anisotropic self-MSD overlay ----
@@ -1502,10 +851,12 @@ ax.set_title("Anisotropic Self-MSD – Flow-Decomposed", fontsize=13, fontweight
 ax.legend(fontsize=9)
 ax.grid(True, alpha=0.3, linestyle="--")
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "anisotropic_self_msd.pdf")
+plt.savefig(output_folder / subfolder / "anisotropic_self_msd.png")
 plt.show()
 
 
-# In[ ]:
+# In[31]:
 
 
 # ---- Plot 4: Per-condition subplots of anisotropic self-MSD ----
@@ -1536,10 +887,13 @@ for ax, condition in zip(axes, conditions):
     ax.legend(fontsize=9)
 
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "anisotropic_self_msd_per_condition.pdf")
+plt.savefig(output_folder / subfolder / "anisotropic_self_msd_per_condition.png")
 plt.show()
 
 
-# In[ ]:
+# In[32]:
+
 
 
 # ---- Plot 5: Anisotropy ratio MSD∥ / MSD⊥ ----
@@ -1563,10 +917,12 @@ ax.set_title("Self-MSD Anisotropy Ratio", fontsize=13, fontweight="bold")
 ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3, linestyle="--")
 plt.tight_layout()
+plt.savefig(output_folder / subfolder / "anisotropy_ratio.pdf")
+plt.savefig(output_folder / subfolder / "anisotropy_ratio.png")
 plt.show()
 
 
-# In[ ]:
+# In[33]:
 
 
 # ---- Summary table ----
@@ -1623,8 +979,6 @@ print(summary_aniso_df.to_string(index=False))
 print("=" * 90)
 
 
+
 # In[ ]:
-
-
-# neighborhood consistency as a heatmap (tracks × time) to identify locally unstable areas
 

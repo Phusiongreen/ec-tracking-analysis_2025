@@ -209,13 +209,46 @@ convert = py_to_nb
 def nb_to_py(nb_path: str | Path) -> str:
     """Read a ``.ipynb`` notebook and return the exported Python source string.
 
-    Uses nbconvert's ``PythonExporter``.
+    Pure-Python implementation — reads the ``.ipynb`` JSON directly and
+    emits ``# In[N]:`` cell markers compatible with ``py_to_nb``.
     """
-    from nbconvert import PythonExporter
+    nb_path = Path(nb_path)
+    with open(nb_path, "r", encoding="utf-8") as f:
+        nb = json.load(f)
 
-    exporter = PythonExporter()
-    py_source, _ = exporter.from_filename(str(nb_path))
-    return py_source
+    parts: list[str] = [
+        "#!/usr/bin/env python",
+        "# coding: utf-8",
+        "",
+    ]
+
+    for cell in nb.get("cells", []):
+        cell_type = cell.get("cell_type", "code")
+        source_lines = cell.get("source", [])
+        # source can be a list of strings or a single string
+        if isinstance(source_lines, str):
+            source_lines = source_lines.splitlines(keepends=True)
+
+        exec_count = cell.get("execution_count")
+        marker = f"# In[{exec_count if exec_count is not None else ' '}]:"
+        parts.append(marker)
+        parts.append("")
+
+        if cell_type == "markdown":
+            for line in source_lines:
+                line = line.rstrip("\n")
+                if line == "":
+                    parts.append("#")
+                else:
+                    parts.append(f"# {line}")
+        else:
+            for line in source_lines:
+                parts.append(line.rstrip("\n"))
+
+        parts.append("")
+        parts.append("")
+
+    return "\n".join(parts) + "\n"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

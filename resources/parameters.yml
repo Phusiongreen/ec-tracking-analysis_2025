@@ -30,6 +30,10 @@ data_exclude: []
 
 frames_per_hour: 6 # number of frames per hour
 
+# time correction parameters (notebook 00)
+
+trackmate_header_rows: 4  # number of non-data header rows to drop from raw TrackMate CSVs
+
 # quality control parameters
 
 min_track_length: 12 # minimum track length in frames
@@ -40,19 +44,52 @@ min_track_length: 12 # minimum track length in frames
 
 observation_time: [0, null] # in frames. Either value can be null to auto-detect from tracking data (uses min of max FRAME across all files)
 allow_tracks_shorter_than_observation_time: true # if True, tracks shorter than observation_time will be included in the plot
-number_of_tracks_per_file: 100 
+number_of_tracks_per_file: 100
 number_of_tracks_per_condition: 300
 
+## velocity colormap
+
+velocity_colormap_limits: [-20.0, 20.0]  # [min, max] velocity in um/h for colormap
+
+## graph analysis
+
+distance_threshold: 50  # um, Delaunay graph edge distance threshold
+num_subsample: 5  # number of tracks to sample for diagnostic histograms
 
 # parameters for velocity computation
 
 time_lag: 4 # interval for velocity computation in frames. In this experimental setup, the first 4 frames are in static conditions and these 4 timespoints are used to compute the velocity of the initial static timepoint(so that average velocity starts around 0).
-single_time_point_evaluation: 48 
+single_time_point_evaluation: 48
 
-#remove these parameters
-#start_phase_2: 24 # start of phase 2 in frames 
-#end_phase_1: 48 # end of phase 1 in frames 
+# flow visualization parameters (notebook 07)
 
+pre_flow_frames: 4  # number of static (pre-flow) frames at the start of the experiment
+show_pre_flow_band: true
+show_flow_ramp_band: true
+flow_ramp_duration_h: 1.5  # duration of the flow ramp-up in hours
+flow_ramp_color: "lightblue"
+show_drug_addition_marker: true
+drug_addition_after_flow_h: 4.0  # hours after flow start when drug is added
+drug_marker_style: "both"  # 'vline', 'asterisk', or 'both'
+drug_marker_color: "darkorange"
 
-#parameters to save storage
-decimal_places : 3
+# flow direction splitting parameters (notebook 07)
+
+target_position_t: 15840.0  # POSITION_T (seconds) at which to evaluate flow direction for splitting
+with_flow_threshold: 5.0  # um/h, vel_x above this = "with flow"
+against_flow_threshold: -5.0  # um/h, vel_x below this = "against flow"
+
+# direction autocorrelation parameters
+
+direction_autocorr_max_lag_frames: 10
+direction_autocorr_sparse_every_n: 1
+
+# plot style parameters
+
+font_size: 14  # matplotlib global font size
+errorbar_ci: 95  # confidence interval percentage for seaborn error bars
+show_treatment_legend: true
+show_band_legend: true
+
+# parameters to save storage
+decimal_places: 3

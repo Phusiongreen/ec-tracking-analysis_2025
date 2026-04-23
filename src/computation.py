@@ -32,8 +32,8 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
 
     for index, row in key_file.iterrows():
         print("Processing file: ", row["filename"])
-        # data = pd.read_csv(base_folder + row["filename"], low_memory=False).drop([0, 1, 2]) #this is now done at 00_correct_time_points_from_trackmate.ipynb
-        data = pd.read_csv(str(output_folder.joinpath("time_correction", row["filename"])), low_memory=False)
+        # data = pd.read_csv(base_folder / row["filename"], low_memory=False).drop([0, 1, 2]) #this is now done at 00_correct_time_points_from_trackmate.ipynb
+        data = pd.read_csv(output_folder / "time_correction" / row["filename"], low_memory=False)
 
         # df copy to work on
         data_ = data[list(column_dtypes)]
@@ -76,12 +76,9 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
         data_["ORIGIN_Y"] = data_["POSITION_Y"] - data_["START_Y"]
         data_["ORIGIN_L"] = np.sqrt(data_["ORIGIN_X"] ** 2 + data_["ORIGIN_Y"] ** 2)
 
-        outpath = Path(output_folder).joinpath(
-            subfolder,
-            "tracking_data_%s_%s_%s.csv" % (row["treatment"], row["color"], row["experimentID"])
-        )
-        print("Saving tracking data to: ", str(outpath))
-        data_.to_csv(str(outpath), index=False)
+        outpath = output_folder / subfolder / f"tracking_data_{row['treatment']}_{row['color']}_{row['experimentID']}.csv"
+        print("Saving tracking data to: ", outpath)
+        data_.to_csv(outpath, index=False)
 
         print("##################")
         if len(tracking_data_df.index) > 10:
@@ -123,7 +120,7 @@ def build_velocity_dataset(
 
                 tracking_file = "tracking_data_%s_%s_%s.csv" % (treatment, row["color"], row["experimentID"])
 
-                data = pd.read_csv(str(data_folder.joinpath(tracking_file)), low_memory=False)
+                data = pd.read_csv(data_folder / tracking_file, low_memory=False)
 
                 print(data["POSITION_X"].min(), data["POSITION_X"].max())
 
@@ -199,10 +196,10 @@ def build_velocity_dataset(
                     vel_index += 1
 
         velocity_condition_df = velocity_df[velocity_df["CONDITION"] == condition]
-        velocity_condition_df.to_csv(str(output_folder.joinpath(subfolder, "velocity_field_%s.csv" % condition)),
+        velocity_condition_df.to_csv(output_folder / subfolder / f"velocity_field_{condition}.csv",
                                      index=False)
 
-        velocity_df.to_csv(str(output_folder.joinpath(subfolder, "velocity_field.csv")), index=False)
+        velocity_df.to_csv(output_folder / subfolder / "velocity_field.csv", index=False)
 
 
 def _filter_tracks(tracking_data, parameters):
@@ -406,9 +403,10 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
             oy = single_track_df["ORIGIN_Y"].to_numpy(dtype=float)
             origin_L = np.hypot(ox, oy)
 
-            single_track_df["eff_vel_mu_per_h"]   = np.round(np.where(mask_elapsed, origin_L / elapsed_h, np.nan), decimal_places)
-            single_track_df["eff_vel_x_mu_per_h"] = np.round(np.where(mask_elapsed, ox       / elapsed_h, np.nan), decimal_places)
-            single_track_df["eff_vel_y_mu_per_h"] = np.round(np.where(mask_elapsed, oy       / elapsed_h, np.nan), decimal_places)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                single_track_df["eff_vel_mu_per_h"]   = np.round(np.where(mask_elapsed, origin_L / elapsed_h, np.nan), decimal_places)
+                single_track_df["eff_vel_x_mu_per_h"] = np.round(np.where(mask_elapsed, ox       / elapsed_h, np.nan), decimal_places)
+                single_track_df["eff_vel_y_mu_per_h"] = np.round(np.where(mask_elapsed, oy       / elapsed_h, np.nan), decimal_places)
             # ---------- Directionality ratio d/D over time (frame-to-frame path length) ----------
             dx1 = np.r_[np.nan, np.diff(x)]
             dy1 = np.r_[np.nan, np.diff(y)]
@@ -417,10 +415,11 @@ def compute_speeds(parameters, key_file, subfolder="tracking_data"):
             path_len = np.cumsum(np.nan_to_num(step1, nan=0.0))
             path_len[0] = np.nan
 
-            single_track_df["dir_ratio"] = np.round(
-                np.where(path_len > 0, origin_L / path_len, np.nan),
-                decimal_places
-            )
+            with np.errstate(invalid="ignore", divide="ignore"):
+                single_track_df["dir_ratio"] = np.round(
+                    np.where(path_len > 0, origin_L / path_len, np.nan),
+                    decimal_places
+                )
             
             # ---------- Rolling 1-hour window metrics ----------
             # Window size in frames (default: frames_per_hour from parameters; fallback from timestamps)
