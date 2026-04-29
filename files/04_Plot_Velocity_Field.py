@@ -11,12 +11,11 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 
 sys.path.append("../")
 from src.io import read_parameters
-from src.computation import normalize_speed, build_velocity_dataset
-from griottes import generate_delaunay_graph, plot_2D
+from src.computation import normalize_speed
+from src.plot import is_auto, resolve_abs_max
 
 cmap = matplotlib.colormaps["seismic_r"]
 
@@ -63,10 +62,15 @@ observation_time = parameters["observation_time"]
 min_vel_lim = parameters["velocity_colormap_limits"][0]
 max_vel_lim = parameters["velocity_colormap_limits"][1]
 
-# extend in microns of the coordinate system used for plotting, 
-# range is [-max_x, max_x] in x direction and [-max_y, max_y] in y direction
-max_x = -1  # um - leave -1 to set automatically
-max_y = -1  # um - leave -1 to set automatically
+# extend in microns of the coordinate system used for plotting.
+# Reads the same YAML parameter as 03_A_Plot_Trajectories; "auto" (default)
+# means use the per-file POSITION_X/Y extent, rounded up to 100 µm.  The
+# legacy sentinel -1 is still honoured for backward compatibility.
+abs_max_cfg = parameters.get("trajectory_plot_abs_max_um", "auto")
+if abs_max_cfg == -1:
+    abs_max_cfg = "auto"
+max_x = -1 if is_auto(abs_max_cfg) else float(abs_max_cfg)
+max_y = max_x
 
 obs_time_length_frames = observation_time[1] - observation_time[0]
 
@@ -97,13 +101,10 @@ for condition in key_file["condition"].unique():
 
         data = pd.read_csv(data_folder / tracking_file, low_memory=False)
 
-        _max_x = max_x
-        if max_x == -1:
-            _max_x = data["POSITION_X"].max()
-
-        _max_y = max_y
-        if max_y == -1:
-            _max_y = data["POSITION_Y"].max()
+        _max_x = resolve_abs_max(abs_max_cfg, data["POSITION_X"].to_numpy(),
+                                 default=float(data["POSITION_X"].max()))
+        _max_y = resolve_abs_max(abs_max_cfg, data["POSITION_Y"].to_numpy(),
+                                 default=float(data["POSITION_Y"].max()))
 
         fig, ax = plt.subplots(1, 2, figsize=(10, 5))
         ax[0].set_aspect('equal', 'box')

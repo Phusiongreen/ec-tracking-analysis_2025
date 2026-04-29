@@ -22,6 +22,7 @@ from src.graph_analysis import (
     compute_relative_neighbor_displacement,
     compute_velocity_alignment_curves,
     compute_anisotropic_separation_and_msd,
+    cross_experiment_stats,
 )
 from src.node_trajectory_viz import plot_node_trajectory_3d
 
@@ -88,6 +89,101 @@ distance_threshold = parameters["distance_threshold"]
 
 num_subsample = parameters["num_subsample"]
 
+# ----------------------------------------------------------------------
+# Helpers for trustworthiness-aware plotting
+# ----------------------------------------------------------------------
+# Per-experiment samples used inside a single replicate to compute ⟨·⟩(τ)
+# are highly non-iid (they share trajectories and overlapping time
+# windows), so the within-replicate ``std/sqrt(N)`` SEM is optimistic.
+# Biological replicates, in contrast, are independent realisations.  The
+# plotting below therefore prefers:
+#   (1) mean ± SEM across experiments (proper independent-replicate bar),
+#   (2) an overlay of N_pairs / N_cells on a twin axis so the reader
+#       sees where the sliding-window statistics thin out,
+#   (3) shading of the τ > τ_max/2 region, which is known to be
+#       unreliable for sliding-window time-lag estimators regardless of
+#       the error bar used.
+
+
+def _low_stat_tau_threshold(tau_array):
+    """Return τ above which sliding-window statistics are considered
+    unreliable (τ > half the maximal available lag)."""
+    if len(tau_array) == 0:
+        return None
+    return tau_array[-1] / 2.0
+
+
+def plot_curve_with_trust(
+    ax,
+    condition_curves,
+    value_key,
+    n_key,
+    color=None,
+    label=None,
+    ylabel="",
+    show_n_axis=True,
+    shade_low_stat=True,
+):
+    """Plot one condition's curve with cross-experiment SEM and N overlay.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+    condition_curves : dict
+        One condition's entry of the condition-level dict returned by any
+        of the graph_analysis functions.  Must contain "tau",
+        ``value_key``, ``n_key`` and "per_experiment".
+    value_key : str
+        Key for the aggregate curve inside ``condition_curves`` and inside
+        each per-experiment dict (e.g. "Sn", "delta_r_mean", "C_mean",
+        "dx2_mean", "msd_par_mean").
+    n_key : str
+        Key for the sample count in ``condition_curves`` (e.g. "N_pairs",
+        "N_cells", "N_measurements").
+    show_n_axis : bool
+        If True, overlay sample count on a twin axis (greyed out).
+    shade_low_stat : bool
+        If True, shade the region τ > τ_max/2 to flag low-statistics.
+    """
+    tau = condition_curves["tau"]
+    if len(tau) == 0:
+        return None
+
+    # --- cross-replicate curve ---
+    cx = cross_experiment_stats(
+        condition_curves["per_experiment"], value_key=value_key
+    )
+    if len(cx["tau"]) > 0:
+        ax.plot(cx["tau"], cx["mean"], marker="o", linewidth=2,
+                color=color, label=label)
+        if np.any(cx["sem"] > 0):
+            ax.fill_between(cx["tau"], cx["mean"] - cx["sem"],
+                             cx["mean"] + cx["sem"], alpha=0.25, color=color,
+                             linewidth=0)
+
+    # --- low-statistics shading ---
+    if shade_low_stat:
+        cutoff = _low_stat_tau_threshold(tau)
+        if cutoff is not None and cutoff < tau[-1]:
+            ax.axvspan(cutoff, tau[-1], color="grey", alpha=0.08, zorder=0)
+
+    # --- N overlay on twin axis ---
+    if show_n_axis:
+        ax2 = ax.twinx()
+        ax2.bar(tau, condition_curves[n_key], width=0.8, alpha=0.18,
+                color="grey", zorder=0)
+        ax2.set_ylabel(f"{n_key} (sliding-window samples)",
+                        fontsize=9, color="grey")
+        ax2.tick_params(axis="y", colors="grey", labelsize=8)
+        ax2.spines["right"].set_color("grey")
+        ax2.set_zorder(ax.get_zorder() - 1)
+        ax.patch.set_visible(False)
+
+    ax.set_ylabel(ylabel, fontsize=11, fontweight="bold")
+    return ax
+
+
+# In[6]:
 
 # In[6]:
 
@@ -236,19 +332,34 @@ survival_curves = compute_neighbor_retention_curve(graphs, key_file, observation
 # In[12]:
 
 # Plot neighbor retention curves for all conditions
+# Uses cross-experiment SEM (independent replicates) instead of within-replicate
+# std/sqrt(N), which is optimistic due to correlated sliding-window samples.
 fig, ax = plt.subplots(figsize=(10, 6))
 
 for condition in key_file["condition"].unique():
     curve_data = survival_curves[condition]
-    tau = curve_data['tau']
-    Sn = curve_data['Sn']
-    Sn_std = curve_data['Sn_std']
-    
-    # Plot with error bars
-    ax.errorbar(tau, Sn, yerr=Sn_std, marker='o', label=condition, linewidth=2, capsize=3, alpha=0.7)
+    cx = cross_experiment_stats(curve_data["per_experiment"], value_key="Sn")
+    if len(cx["tau"]) == 0:
+        continue
+    line, = ax.plot(cx["tau"], cx["mean"], marker="o", linewidth=2,
+                    label=f"{condition}  (n={int(np.max(cx['n_experiments']))} exp)")
+    if np.any(cx["sem"] > 0):
+        ax.fill_between(cx["tau"], cx["mean"] - cx["sem"], cx["mean"] + cx["sem"],
+                        alpha=0.25, color=line.get_color(), linewidth=0)
+
+# shade low-statistics region (τ > τ_max/2) – sliding-window estimator unreliable
+tau_max_global = max(
+    (survival_curves[c]["tau"][-1] for c in key_file["condition"].unique()
+     if len(survival_curves[c]["tau"]) > 0),
+    default=None,
+)
+if tau_max_global is not None:
+    ax.axvspan(tau_max_global / 2.0, tau_max_global, color="grey", alpha=0.08,
+               label="τ > τ_max/2 (low stat.)")
+
 
 ax.set_xlabel('Time lag τ (frames)', fontsize=12, fontweight='bold')
-ax.set_ylabel('Neighbor Retention Sₙ(τ)', fontsize=12, fontweight='bold')
+ax.set_ylabel('Neighbor Retention Sₙ(τ) — replicate mean ± SEM', fontsize=12, fontweight='bold')
 ax.set_title('Neighbor Retention/Survival Curves by Condition', fontsize=13, fontweight='bold')
 ax.set_ylim([0, 1.05])
 ax.grid(True, alpha=0.3, linestyle='--')
@@ -256,6 +367,33 @@ ax.legend(fontsize=10)
 plt.tight_layout()
 plt.savefig(output_folder / subfolder / "neighbor_retention_curves.pdf")
 plt.savefig(output_folder / subfolder / "neighbor_retention_curves.png")
+plt.show()
+
+
+
+
+# In[12b]:
+
+# Per-condition retention with sample-count overlay
+conditions = list(key_file["condition"].unique())
+n_cond = len(conditions)
+fig, axes = plt.subplots(1, n_cond, figsize=(6 * n_cond, 5), sharey=True)
+if n_cond == 1:
+    axes = [axes]
+for ax, condition in zip(axes, conditions):
+    plot_curve_with_trust(
+        ax, survival_curves[condition],
+        value_key="Sn", n_key="N_measurements",
+        color="steelblue",
+        ylabel="Neighbor Retention Sₙ(τ)",
+    )
+    ax.set_xlabel("Time lag τ (frames)", fontsize=11, fontweight="bold")
+    ax.set_title(f"Condition: {condition}", fontsize=12, fontweight="bold")
+    ax.set_ylim([0, 1.05])
+    ax.grid(True, alpha=0.3, linestyle="--")
+plt.tight_layout()
+plt.savefig(output_folder / subfolder / "neighbor_retention_curves_trust.pdf")
+plt.savefig(output_folder / subfolder / "neighbor_retention_curves_trust.png")
 plt.show()
 
 
@@ -407,19 +545,31 @@ displacement_curves = compute_relative_neighbor_displacement(graphs, key_file, o
 # In[17]:
 
 # Plot cage-relative displacement ⟨δr(τ)⟩ for all conditions
+# Band = SEM across experiments (independent replicates); shaded τ-region flags
+# sliding-window low-statistics (τ > τ_max/2).
 fig, ax = plt.subplots(figsize=(10, 6))
 
+tau_max_global = None
 for condition in key_file["condition"].unique():
     cd = displacement_curves[condition]
-    tau = cd["tau"]
-    mean = cd["delta_r_mean"]
-    sem = cd["delta_r_sem"]
+    cx = cross_experiment_stats(cd["per_experiment"], value_key="delta_r_mean")
+    if len(cx["tau"]) == 0:
+        continue
+    line, = ax.plot(cx["tau"], cx["mean"], marker="o", linewidth=2,
+                    label=f"{condition}  (n={int(np.max(cx['n_experiments']))} exp)")
+    if np.any(cx["sem"] > 0):
+        ax.fill_between(cx["tau"], cx["mean"] - cx["sem"], cx["mean"] + cx["sem"],
+                        alpha=0.25, color=line.get_color(), linewidth=0)
+    if len(cd["tau"]) and (tau_max_global is None or cd["tau"][-1] > tau_max_global):
+        tau_max_global = cd["tau"][-1]
 
-    ax.plot(tau, mean, marker="o", linewidth=2, label=condition)
-    ax.fill_between(tau, mean - sem, mean + sem, alpha=0.2)
+if tau_max_global is not None:
+    ax.axvspan(tau_max_global / 2.0, tau_max_global, color="grey", alpha=0.08,
+               label="τ > τ_max/2 (low stat.)")
+
 
 ax.set_xlabel("Time lag τ (frames)", fontsize=12, fontweight="bold")
-ax.set_ylabel("⟨δr(τ)⟩  (µm)", fontsize=12, fontweight="bold")
+ax.set_ylabel("⟨δr(τ)⟩  (µm) — replicate mean ± SEM", fontsize=12, fontweight="bold")
 ax.set_title("Cage-Relative Neighbor Displacement", fontsize=13, fontweight="bold")
 ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3, linestyle="--")
@@ -437,7 +587,7 @@ plt.show()
 # In[18]:
 
 
-# Per-condition subplots: mean ± std (shaded) with pair counts annotated
+# Per-condition subplots with pair-count overlay and low-statistics shading
 conditions = key_file["condition"].unique()
 n_cond = len(conditions)
 
@@ -446,18 +596,15 @@ if n_cond == 1:
     axes = [axes]
 
 for ax, condition in zip(axes, conditions):
-    cd = displacement_curves[condition]
-    tau = cd["tau"]
-    mean = cd["delta_r_mean"]
-    std = cd["delta_r_std"]
-
-    ax.plot(tau, mean, "o-", color="teal", linewidth=2)
-    ax.fill_between(tau, mean - std, mean + std, color="teal", alpha=0.15, label="± 1 std")
+    plot_curve_with_trust(
+        ax, displacement_curves[condition],
+        value_key="delta_r_mean", n_key="N_pairs",
+        color="teal",
+        ylabel="⟨δr(τ)⟩  (µm)",
+    )
     ax.set_xlabel("Time lag τ (frames)", fontsize=11, fontweight="bold")
-    ax.set_ylabel("⟨δr(τ)⟩  (µm)", fontsize=11, fontweight="bold")
     ax.set_title(f"Condition: {condition}", fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(fontsize=9)
 
 plt.tight_layout()
 plt.savefig(output_folder / subfolder / "cage_relative_displacement_per_condition.pdf")
@@ -518,22 +665,32 @@ alignment_curves_unnorm = compute_velocity_alignment_curves(
 
 # In[21]:
 
-
 # Plot normalized velocity alignment  C_align(τ)  for all conditions
+# Band = SEM across experiments (independent replicates).
 fig, ax = plt.subplots(figsize=(10, 6))
 
+tau_max_global = None
 for condition in key_file["condition"].unique():
     cd = alignment_curves_norm[condition]
-    tau = cd["tau"]
-    mean = cd["C_mean"]
-    sem = cd["C_sem"]
+    cx = cross_experiment_stats(cd["per_experiment"], value_key="C_mean")
+    if len(cx["tau"]) == 0:
+        continue
+    line, = ax.plot(cx["tau"], cx["mean"], marker="o", linewidth=2,
+                    label=f"{condition}  (n={int(np.max(cx['n_experiments']))} exp)")
+    if np.any(cx["sem"] > 0):
+        ax.fill_between(cx["tau"], cx["mean"] - cx["sem"], cx["mean"] + cx["sem"],
+                        alpha=0.25, color=line.get_color(), linewidth=0)
+    if len(cd["tau"]) and (tau_max_global is None or cd["tau"][-1] > tau_max_global):
+        tau_max_global = cd["tau"][-1]
 
-    ax.plot(tau, mean, marker="o", linewidth=2, label=condition)
-    ax.fill_between(tau, mean - sem, mean + sem, alpha=0.2)
+if tau_max_global is not None:
+    ax.axvspan(tau_max_global / 2.0, tau_max_global, color="grey", alpha=0.08,
+               label="τ > τ_max/2 (low stat.)")
 
 ax.axhline(0, color="grey", linewidth=0.8, linestyle="--")
 ax.set_xlabel("Time lag τ (frames)", fontsize=12, fontweight="bold")
-ax.set_ylabel(r"$C_{\mathrm{align}}(\tau)$  (unit-vector dot product)", fontsize=12, fontweight="bold")
+ax.set_ylabel(r"$C_{\mathrm{align}}(\tau)$  (unit-vector dot product) — replicate mean ± SEM",
+              fontsize=12, fontweight="bold")
 ax.set_title("Neighbor Velocity Alignment – Normalized", fontsize=13, fontweight="bold")
 ax.legend(fontsize=10)
 ax.grid(True, alpha=0.3, linestyle="--")
@@ -541,6 +698,7 @@ plt.tight_layout()
 plt.savefig(output_folder / subfolder / "velocity_alignment_normalized.pdf")
 plt.savefig(output_folder / subfolder / "velocity_alignment_normalized.png")
 plt.show()
+
 
 
 
@@ -552,16 +710,22 @@ fig, ax = plt.subplots(figsize=(10, 6))
 
 for condition in key_file["condition"].unique():
     cd = alignment_curves_unnorm[condition]
-    tau = cd["tau"]
-    mean = cd["C_mean"]
-    sem = cd["C_sem"]
+    cx = cross_experiment_stats(cd["per_experiment"], value_key="C_mean")
+    if len(cx["tau"]) == 0:
+        continue
+    line, = ax.plot(cx["tau"], cx["mean"], marker="o", linewidth=2,
+                    label=f"{condition}  (n={int(np.max(cx['n_experiments']))} exp)")
+    if np.any(cx["sem"] > 0):
+        ax.fill_between(cx["tau"], cx["mean"] - cx["sem"], cx["mean"] + cx["sem"],
+                        alpha=0.25, color=line.get_color(), linewidth=0)
 
-    ax.plot(tau, mean, marker="o", linewidth=2, label=condition)
-    ax.fill_between(tau, mean - sem, mean + sem, alpha=0.2)
+if tau_max_global is not None:
+    ax.axvspan(tau_max_global / 2.0, tau_max_global, color="grey", alpha=0.08,
+               label="τ > τ_max/2 (low stat.)")
 
 ax.axhline(0, color="grey", linewidth=0.8, linestyle="--")
 ax.set_xlabel("Time lag τ (frames)", fontsize=12, fontweight="bold")
-ax.set_ylabel(r"$\langle \mathbf{v}_i(t) \cdot \mathbf{v}_j(t+\tau) \rangle$  (µm²/frame²)",
+ax.set_ylabel(r"$\langle \mathbf{v}_i(t) \cdot \mathbf{v}_j(t+\tau) \rangle$  (µm²/frame²) — replicate mean ± SEM",
               fontsize=12, fontweight="bold")
 ax.set_title("Neighbor Velocity Alignment – Unnormalized (speed-weighted)",
              fontsize=13, fontweight="bold")
@@ -573,10 +737,11 @@ plt.savefig(output_folder / subfolder / "velocity_alignment_unnormalized.png")
 plt.show()
 
 
+
+
 # In[23]:
 
-
-# Per-condition subplots: normalized alignment  ±  1 std
+# Per-condition subplots: normalized alignment with replicate SEM + pair-count overlay
 conditions = key_file["condition"].unique()
 n_cond = len(conditions)
 
@@ -585,19 +750,16 @@ if n_cond == 1:
     axes = [axes]
 
 for ax, condition in zip(axes, conditions):
-    cd = alignment_curves_norm[condition]
-    tau = cd["tau"]
-    mean = cd["C_mean"]
-    std = cd["C_std"]
-
-    ax.plot(tau, mean, "o-", color="darkorange", linewidth=2)
-    ax.fill_between(tau, mean - std, mean + std, color="darkorange", alpha=0.15, label="± 1 std")
+    plot_curve_with_trust(
+        ax, alignment_curves_norm[condition],
+        value_key="C_mean", n_key="N_pairs",
+        color="darkorange",
+        ylabel=r"$C_{\mathrm{align}}(\tau)$",
+    )
     ax.axhline(0, color="grey", linewidth=0.8, linestyle="--")
     ax.set_xlabel("Time lag τ (frames)", fontsize=11, fontweight="bold")
-    ax.set_ylabel(r"$C_{\mathrm{align}}(\tau)$", fontsize=11, fontweight="bold")
     ax.set_title(f"Condition: {condition}", fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(fontsize=9)
 
 plt.tight_layout()
 plt.savefig(output_folder / subfolder / "velocity_alignment_normalized_per_condition.pdf")
@@ -762,24 +924,38 @@ pair_sep_curves, msd_aniso_curves = compute_anisotropic_separation_and_msd(
 
 
 # ---- Plot 1: Pairwise separation ⟨δx²⟩ and ⟨δy²⟩ overlay ----
+# Band = SEM across experiments (replicates); within-replicate σ/sqrt(N) would
+# be optimistic because sliding-window samples are correlated along trajectories.
 fig, ax = plt.subplots(figsize=(10, 6))
 
+tau_max_global_ps = None
 for condition in key_file["condition"].unique():
     cd = pair_sep_curves[condition]
-    tau = cd["tau"]
+    cx_x = cross_experiment_stats(cd["per_experiment"], value_key="dx2_mean")
+    cx_y = cross_experiment_stats(cd["per_experiment"], value_key="dy2_mean")
+    if len(cx_x["tau"]):
+        lx, = ax.plot(cx_x["tau"], cx_x["mean"], marker="o", linewidth=2,
+                      label=f"{condition} – ∥ flow (x)")
+        if np.any(cx_x["sem"] > 0):
+            ax.fill_between(cx_x["tau"], cx_x["mean"] - cx_x["sem"],
+                             cx_x["mean"] + cx_x["sem"], alpha=0.20, color=lx.get_color(),
+                             linewidth=0)
+    if len(cx_y["tau"]):
+        ly, = ax.plot(cx_y["tau"], cx_y["mean"], marker="s", linewidth=2, linestyle="--",
+                      label=f"{condition} – ⊥ flow (y)")
+        if np.any(cx_y["sem"] > 0):
+            ax.fill_between(cx_y["tau"], cx_y["mean"] - cx_y["sem"],
+                             cx_y["mean"] + cx_y["sem"], alpha=0.20, color=ly.get_color(),
+                             linewidth=0)
+    if len(cd["tau"]) and (tau_max_global_ps is None or cd["tau"][-1] > tau_max_global_ps):
+        tau_max_global_ps = cd["tau"][-1]
 
-    ax.plot(tau, cd["dx2_mean"], marker="o", linewidth=2,
-            label=f"{condition} – ∥ flow (x)")
-    ax.fill_between(tau, cd["dx2_mean"] - cd["dx2_sem"],
-                     cd["dx2_mean"] + cd["dx2_sem"], alpha=0.15)
-
-    ax.plot(tau, cd["dy2_mean"], marker="s", linewidth=2, linestyle="--",
-            label=f"{condition} – ⊥ flow (y)")
-    ax.fill_between(tau, cd["dy2_mean"] - cd["dy2_sem"],
-                     cd["dy2_mean"] + cd["dy2_sem"], alpha=0.15)
+if tau_max_global_ps is not None:
+    ax.axvspan(tau_max_global_ps / 2.0, tau_max_global_ps, color="grey", alpha=0.08,
+               label="τ > τ_max/2 (low stat.)")
 
 ax.set_xlabel("Time lag τ (frames)", fontsize=12, fontweight="bold")
-ax.set_ylabel(r"$\langle \delta x^2 \rangle$, $\langle \delta y^2 \rangle$  (µm²)",
+ax.set_ylabel(r"$\langle \delta x^2 \rangle$, $\langle \delta y^2 \rangle$  (µm²) — replicate mean ± SEM",
               fontsize=12, fontweight="bold")
 ax.set_title("Pairwise Neighbor Separation – Flow-Decomposed", fontsize=13, fontweight="bold")
 ax.legend(fontsize=9)
@@ -793,7 +969,7 @@ plt.show()
 # In[29]:
 
 
-# ---- Plot 2: Per-condition subplots of pairwise separation ----
+# ---- Plot 2: Per-condition subplots of pairwise separation with trust overlays ----
 conditions = key_file["condition"].unique()
 n_cond = len(conditions)
 
@@ -803,21 +979,42 @@ if n_cond == 1:
 
 for ax, condition in zip(axes, conditions):
     cd = pair_sep_curves[condition]
-    tau = cd["tau"]
+    cx_x = cross_experiment_stats(cd["per_experiment"], value_key="dx2_mean")
+    cx_y = cross_experiment_stats(cd["per_experiment"], value_key="dy2_mean")
 
-    ax.plot(tau, cd["dx2_mean"], "o-", color="royalblue", linewidth=2, label="∥ flow (x)")
-    ax.fill_between(tau, cd["dx2_mean"] - cd["dx2_std"],
-                     cd["dx2_mean"] + cd["dx2_std"], color="royalblue", alpha=0.12, label="± 1 std")
+    if len(cx_x["tau"]):
+        ax.plot(cx_x["tau"], cx_x["mean"], "o-", color="royalblue", linewidth=2,
+                label="∥ flow (x)")
+        if np.any(cx_x["sem"] > 0):
+            ax.fill_between(cx_x["tau"], cx_x["mean"] - cx_x["sem"],
+                             cx_x["mean"] + cx_x["sem"], color="royalblue", alpha=0.20,
+                             linewidth=0, label="± SEM (replicates)")
+    if len(cx_y["tau"]):
+        ax.plot(cx_y["tau"], cx_y["mean"], "s--", color="crimson", linewidth=2,
+                label="⊥ flow (y)")
+        if np.any(cx_y["sem"] > 0):
+            ax.fill_between(cx_y["tau"], cx_y["mean"] - cx_y["sem"],
+                             cx_y["mean"] + cx_y["sem"], color="crimson", alpha=0.20,
+                             linewidth=0)
 
-    ax.plot(tau, cd["dy2_mean"], "s--", color="crimson", linewidth=2, label="⊥ flow (y)")
-    ax.fill_between(tau, cd["dy2_mean"] - cd["dy2_std"],
-                     cd["dy2_mean"] + cd["dy2_std"], color="crimson", alpha=0.12)
+    cutoff = _low_stat_tau_threshold(cd["tau"])
+    if cutoff is not None and cutoff < cd["tau"][-1]:
+        ax.axvspan(cutoff, cd["tau"][-1], color="grey", alpha=0.08, zorder=0)
+
+    # N overlay
+    ax2 = ax.twinx()
+    ax2.bar(cd["tau"], cd["N_pairs"], width=0.8, alpha=0.18, color="grey", zorder=0)
+    ax2.set_ylabel("N_pairs (sliding-window samples)", fontsize=9, color="grey")
+    ax2.tick_params(axis="y", colors="grey", labelsize=8)
+    ax2.spines["right"].set_color("grey")
+    ax2.set_zorder(ax.get_zorder() - 1)
+    ax.patch.set_visible(False)
 
     ax.set_xlabel("Time lag τ (frames)", fontsize=11, fontweight="bold")
     ax.set_ylabel(r"$\langle \delta^2 \rangle$  (µm²)", fontsize=11, fontweight="bold")
     ax.set_title(f"Pair Separation – {condition}", fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=9, loc="upper left")
 
 plt.tight_layout()
 plt.savefig(output_folder / subfolder / "pairwise_separation_per_condition.pdf")
@@ -828,25 +1025,37 @@ plt.show()
 # In[30]:
 
 
-# ---- Plot 3: Anisotropic self-MSD overlay ----
+# ---- Plot 3: Anisotropic self-MSD overlay (replicate-SEM error bands) ----
 fig, ax = plt.subplots(figsize=(10, 6))
 
+tau_max_global_ms = None
 for condition in key_file["condition"].unique():
     cd = msd_aniso_curves[condition]
-    tau = cd["tau"]
+    cx_par = cross_experiment_stats(cd["per_experiment"], value_key="msd_par_mean")
+    cx_perp = cross_experiment_stats(cd["per_experiment"], value_key="msd_perp_mean")
+    if len(cx_par["tau"]):
+        lp, = ax.plot(cx_par["tau"], cx_par["mean"], marker="o", linewidth=2,
+                      label=f"{condition} – MSD∥ (x)")
+        if np.any(cx_par["sem"] > 0):
+            ax.fill_between(cx_par["tau"], cx_par["mean"] - cx_par["sem"],
+                             cx_par["mean"] + cx_par["sem"], alpha=0.20,
+                             color=lp.get_color(), linewidth=0)
+    if len(cx_perp["tau"]):
+        lr, = ax.plot(cx_perp["tau"], cx_perp["mean"], marker="s", linewidth=2,
+                      linestyle="--", label=f"{condition} – MSD⊥ (y)")
+        if np.any(cx_perp["sem"] > 0):
+            ax.fill_between(cx_perp["tau"], cx_perp["mean"] - cx_perp["sem"],
+                             cx_perp["mean"] + cx_perp["sem"], alpha=0.20,
+                             color=lr.get_color(), linewidth=0)
+    if len(cd["tau"]) and (tau_max_global_ms is None or cd["tau"][-1] > tau_max_global_ms):
+        tau_max_global_ms = cd["tau"][-1]
 
-    ax.plot(tau, cd["msd_par_mean"], marker="o", linewidth=2,
-            label=f"{condition} – MSD∥ (x)")
-    ax.fill_between(tau, cd["msd_par_mean"] - cd["msd_par_sem"],
-                     cd["msd_par_mean"] + cd["msd_par_sem"], alpha=0.15)
-
-    ax.plot(tau, cd["msd_perp_mean"], marker="s", linewidth=2, linestyle="--",
-            label=f"{condition} – MSD⊥ (y)")
-    ax.fill_between(tau, cd["msd_perp_mean"] - cd["msd_perp_sem"],
-                     cd["msd_perp_mean"] + cd["msd_perp_sem"], alpha=0.15)
+if tau_max_global_ms is not None:
+    ax.axvspan(tau_max_global_ms / 2.0, tau_max_global_ms, color="grey", alpha=0.08,
+               label="τ > τ_max/2 (low stat.)")
 
 ax.set_xlabel("Time lag τ (frames)", fontsize=12, fontweight="bold")
-ax.set_ylabel(r"MSD  (µm²)", fontsize=12, fontweight="bold")
+ax.set_ylabel(r"MSD  (µm²) — replicate mean ± SEM", fontsize=12, fontweight="bold")
 ax.set_title("Anisotropic Self-MSD – Flow-Decomposed", fontsize=13, fontweight="bold")
 ax.legend(fontsize=9)
 ax.grid(True, alpha=0.3, linestyle="--")
@@ -869,28 +1078,47 @@ if n_cond == 1:
 
 for ax, condition in zip(axes, conditions):
     cd = msd_aniso_curves[condition]
-    tau = cd["tau"]
+    cx_par = cross_experiment_stats(cd["per_experiment"], value_key="msd_par_mean")
+    cx_perp = cross_experiment_stats(cd["per_experiment"], value_key="msd_perp_mean")
 
-    ax.plot(tau, cd["msd_par_mean"], "o-", color="royalblue", linewidth=2, label="MSD∥ (x)")
-    ax.fill_between(tau, cd["msd_par_mean"] - cd["msd_par_std"],
-                     cd["msd_par_mean"] + cd["msd_par_std"], color="royalblue", alpha=0.12,
-                     label="± 1 std")
+    if len(cx_par["tau"]):
+        ax.plot(cx_par["tau"], cx_par["mean"], "o-", color="royalblue", linewidth=2,
+                label="MSD∥ (x)")
+        if np.any(cx_par["sem"] > 0):
+            ax.fill_between(cx_par["tau"], cx_par["mean"] - cx_par["sem"],
+                             cx_par["mean"] + cx_par["sem"], color="royalblue",
+                             alpha=0.20, linewidth=0, label="± SEM (replicates)")
+    if len(cx_perp["tau"]):
+        ax.plot(cx_perp["tau"], cx_perp["mean"], "s--", color="crimson", linewidth=2,
+                label="MSD⊥ (y)")
+        if np.any(cx_perp["sem"] > 0):
+            ax.fill_between(cx_perp["tau"], cx_perp["mean"] - cx_perp["sem"],
+                             cx_perp["mean"] + cx_perp["sem"], color="crimson",
+                             alpha=0.20, linewidth=0)
 
-    ax.plot(tau, cd["msd_perp_mean"], "s--", color="crimson", linewidth=2, label="MSD⊥ (y)")
-    ax.fill_between(tau, cd["msd_perp_mean"] - cd["msd_perp_std"],
-                     cd["msd_perp_mean"] + cd["msd_perp_std"], color="crimson", alpha=0.12)
+    cutoff = _low_stat_tau_threshold(cd["tau"])
+    if cutoff is not None and cutoff < cd["tau"][-1]:
+        ax.axvspan(cutoff, cd["tau"][-1], color="grey", alpha=0.08, zorder=0)
+
+    # N_cells overlay
+    ax2 = ax.twinx()
+    ax2.bar(cd["tau"], cd["N_cells"], width=0.8, alpha=0.18, color="grey", zorder=0)
+    ax2.set_ylabel("N_cells (sliding-window samples)", fontsize=9, color="grey")
+    ax2.tick_params(axis="y", colors="grey", labelsize=8)
+    ax2.spines["right"].set_color("grey")
+    ax2.set_zorder(ax.get_zorder() - 1)
+    ax.patch.set_visible(False)
 
     ax.set_xlabel("Time lag τ (frames)", fontsize=11, fontweight="bold")
     ax.set_ylabel("MSD  (µm²)", fontsize=11, fontweight="bold")
     ax.set_title(f"Self-MSD – {condition}", fontsize=12, fontweight="bold")
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(fontsize=9)
+    ax.legend(fontsize=9, loc="upper left")
 
 plt.tight_layout()
 plt.savefig(output_folder / subfolder / "anisotropic_self_msd_per_condition.pdf")
 plt.savefig(output_folder / subfolder / "anisotropic_self_msd_per_condition.png")
 plt.show()
-
 
 # In[32]:
 

@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.append("../")
 from src.io import read_parameters
 from src.computation import _calc_rel_vel, _filter_tracks
+from src.plot import is_auto, resolve_abs_max, resolve_halfrange
 
 
 cmap = matplotlib.colormaps["seismic_r"]
@@ -71,10 +72,21 @@ end_time_hours = observation_time[1] / frames_per_hour
 min_vel_lim = parameters["velocity_colormap_limits"][0]
 max_vel_lim = parameters["velocity_colormap_limits"][1]
 
-# extend in microns of the coordinate system used for plotting, 
+# ---------------------------------------------------------------------------
+# Axis limits for the three trajectory plots (from parameters.yml, merged
+# with the per-experiment YAML).  A numeric value = the limit in µm; the
+# string "auto" = fit to the data extent of the plotted tracks, rounded up
+# to the next 100 µm so the border is never tighter than the longest track.
+# ---------------------------------------------------------------------------
+abs_max_cfg           = parameters.get("trajectory_plot_abs_max_um", 2000)
+origin_halfrange_cfg  = parameters.get("trajectory_plot_origin_halfrange_um", 1000)
+treat_halfrange_cfg   = parameters.get("trajectory_plot_treatment_halfrange_um", "auto")
+
+
+# extend in microns of the coordinate system used for plotting,
 # range is [0, max_x] in x direction and [0, max_y] in y direction
-max_x = 2000.0 # um
-max_y = 2000.0 # um
+max_x = float(abs_max_cfg) if not is_auto(abs_max_cfg) else 2000.0
+max_y = max_x
 
 list_of_files = []
 experiment_ids = []
@@ -127,10 +139,18 @@ for tracking_data_path, experimentID in zip(list_of_files, experiment_ids):
     print("Available tracks: %s" % len(trackID_list))
     number_of_tracks += len(trackID_list)
 
+    # collect data extent for optional "auto" axis limits
+    _xs_all, _ys_all = [], []
+
     # plot trajectories
     for track_id in trackID_list:
         rel_vel, max_vel, min_vel, single_track_df, _, _ = _calc_rel_vel(observation_period_df, track_id, min_vel_lim, max_vel_lim, max_vel, min_vel, parameters)
         ax.plot(single_track_df["POSITION_X"],single_track_df["POSITION_Y"], color = cmap(rel_vel))
+        _xs_all.append(single_track_df["POSITION_X"].to_numpy())
+        _ys_all.append(single_track_df["POSITION_Y"].to_numpy())
+
+    _xs_all = np.concatenate(_xs_all) if _xs_all else np.array([])
+    _ys_all = np.concatenate(_ys_all) if _ys_all else np.array([])
         
     # add colorbar
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
@@ -142,8 +162,9 @@ for tracking_data_path, experimentID in zip(list_of_files, experiment_ids):
     print("max velocity: ", max_vel, " um/h: ", " min velocity : ", min_vel, " um/h (parallel to flow)")
     
     # set figure properties
-    ax.set_xlim(0,max_x)
-    ax.set_ylim(0,max_y)
+    _abs_lim = resolve_abs_max(abs_max_cfg, _xs_all, _ys_all, default=max_x)
+    ax.set_xlim(0, _abs_lim)
+    ax.set_ylim(0, _abs_lim)
     ax.axhline(0, color = "red", linestyle = "--")
     ax.axvline(0, color = "red", linestyle = "--")
 
@@ -198,6 +219,9 @@ for condition in condition_ids:
         
         fig, ax = plt.subplots(figsize=(9,9))
         
+        # collect data extent for optional "auto" axis limits
+        _dx_all, _dy_all = [], []
+        
         obs_time_length_frames = observation_time[1] - observation_time[0]
         # Convert frames to hours
         start_time_hours = observation_time[0] / frames_per_hour
@@ -227,6 +251,11 @@ for condition in condition_ids:
         
                 ax.plot(single_track_df["X_from_origin"],single_track_df["Y_from_origin"], color = cmap(rel_vel))
                 ax.plot([delta_x],[delta_y], color = "black", marker = "o", alpha=0.5) 
+                _dx_all.append(single_track_df["X_from_origin"].to_numpy())
+                _dy_all.append(single_track_df["Y_from_origin"].to_numpy())
+        
+        _dx_all = np.concatenate(_dx_all) if _dx_all else np.array([])
+        _dy_all = np.concatenate(_dy_all) if _dy_all else np.array([])
         
         # add colorbar
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
@@ -241,8 +270,9 @@ for condition in condition_ids:
         print("max velocity: ", max_vel, " um/h: ", " min velocity : ", min_vel, " um/h (parallel to flow)")
         
         # set figure properties
-        ax.set_xlim(-1000,1000)
-        ax.set_ylim(-1000,1000)
+        _hr = resolve_halfrange(origin_halfrange_cfg, _dx_all, _dy_all, default=1000.0)
+        ax.set_xlim(-_hr, _hr)
+        ax.set_ylim(-_hr, _hr)
         ax.axhline(0, color = "red", linestyle = "--")
         ax.axvline(0, color = "red", linestyle = "--")
        
@@ -293,6 +323,9 @@ for treatment, key_select in key_file.groupby("treatment"):
 
     fig, ax = plt.subplots(figsize=(9,9))
 
+    # collect data extent for optional "auto" axis limits
+    _dx_all, _dy_all = [], []
+
     obs_time_length_frames = observation_time[1] - observation_time[0]
     # Convert start and end frames to hours
     start_time_hours = observation_time[0] / frames_per_hour
@@ -321,6 +354,11 @@ for treatment, key_select in key_file.groupby("treatment"):
                     color = cmap(rel_vel))
             ax.plot([delta_x], [delta_y],
                     color = "black", marker = "o", alpha=0.5)
+            _dx_all.append(single_track_df["X_from_origin"].to_numpy())
+            _dy_all.append(single_track_df["Y_from_origin"].to_numpy())
+
+    _dx_all = np.concatenate(_dx_all) if _dx_all else np.array([])
+    _dy_all = np.concatenate(_dy_all) if _dy_all else np.array([])
 
     # After processing all replicates for this treatment, add colorbar and titles
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1))
@@ -332,8 +370,9 @@ for treatment, key_select in key_file.groupby("treatment"):
     print("sampled %s tracks in total" % track_counter)
     print("max velocity: ", max_vel, " um/h; min velocity: ", min_vel, " um/h (parallel to flow)")
 
-    ax.set_xlim(-300, 300)
-    ax.set_ylim(-300, 300)
+    _hr = resolve_halfrange(treat_halfrange_cfg, _dx_all, _dy_all, default=1000.0)
+    ax.set_xlim(-_hr, _hr)
+    ax.set_ylim(-_hr, _hr)
     ax.axhline(0, color="red", linestyle="--")
     ax.axvline(0, color="red", linestyle="--")
     ax.set_xlabel(r"$\Delta x$ in $\mu m$")

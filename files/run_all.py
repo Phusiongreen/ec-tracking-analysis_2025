@@ -12,15 +12,15 @@ import sys
 from pathlib import Path
 
 SCRIPTS = [
-    "00_correct_time_points_from_trackmate.py",
+    "00_prepare_trackmate_export.py",
     "01_Preprocess_TackMate_Data.py",
     "02_Quality_Control.py",
     "03_A_Plot_Trajectories.py",
     "04_Plot_Velocity_Field.py",
     "05_Graph_Analysis.py",
     "06_Time_Graph_Analysis.py",
-    "07_Plot_Migration_Speeds.py",
-    "08_Compare_Average_Velocities.py",
+    #"07_Plot_Migration_Speeds.py",
+    #"08_Compare_Average_Velocities.py",
 ]
 
 

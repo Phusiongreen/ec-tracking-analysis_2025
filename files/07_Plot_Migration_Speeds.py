@@ -22,6 +22,7 @@ from statannot import add_stat_annotation
 sys.path.append("../")
 from src.io import read_parameters
 from src.computation import compute_speeds, compute_direction_autocorrelation
+from src.plot import resolve_interval
 
 
 # In[23]:
@@ -743,8 +744,24 @@ ax.xaxis.set_major_locator(mticker.MultipleLocator(2.5))
 ax.xaxis.set_major_formatter(mticker.FormatStrFormatter('%.1f'))  # 0.0, 2.5, 5.0, ...
 
 ax.set_title("Velocity Parallel to Flow (Individual Experiments)", fontsize=15)
-ax.set_xlim(0,22.0)
-ax.set_ylim(-20, 10)
+
+# Axis limits: reads YAML parameters, falls back to data-driven "auto".
+_time_xlim = resolve_interval(
+    parameters.get("migration_speed_time_xlim_h", "auto"),
+    plot_migration_speeds["time_in_h"].to_numpy(),
+    default=(0.0, 22.0),
+    step=1.0,
+)
+_vel_ylim = resolve_interval(
+    parameters.get("migration_speed_velocity_ylim_um_h", "auto"),
+    plot_migration_speeds["vel_x_mu_per_h"].to_numpy(),
+    default=(-20.0, 10.0),
+    step=5.0,
+)
+# x-axis always starts at 0
+_time_xlim = (max(0.0, _time_xlim[0]), _time_xlim[1])
+ax.set_xlim(*_time_xlim)
+ax.set_ylim(*_vel_ylim)
 ax.axhline(y = 0.0, color = 'r', linestyle = 'dashed')
 # Draw pre-flow/ramp + optional drug-addition marker
 if show_pre_flow_band:

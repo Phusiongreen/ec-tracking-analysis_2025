@@ -197,6 +197,7 @@ def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time):
 
         experiments_for_condition = key_file[key_file["condition"] == condition]
         retention_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
+        per_experiment = {}
 
         for _, row in experiments_for_condition.iterrows():
             experimentID = row["experimentID"]
@@ -206,6 +207,8 @@ def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time):
                 continue
 
             t_graphs = graphs_dict[experimentID]
+            exp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
+
 
             for t0_idx in range(len(t_graphs) - 1):
                 G_t0 = t_graphs[t0_idx]
@@ -216,18 +219,36 @@ def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time):
                         continue
 
                     for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
+                        t_idx = t0_idx + tau  # t_idx relative to t0_idx
+                        if t_idx >= len(t_graphs):   # stop condition for relative iteration
                             break
 
+                        # get graph for t_idx
                         G_t = t_graphs[t_idx]
+
+                        # check if node_id still present at that time point
                         if node_id not in G_t.nodes():
                             continue
 
+                        # calculate neighborhood retention fraction for node_id
                         neighbors_t = set(G_t.neighbors(node_id))
                         intersection_size = len(neighbors_t0 & neighbors_t)
                         retention_fraction = intersection_size / len(neighbors_t0)
                         retention_by_tau[tau].append(retention_fraction)
+                        exp_by_tau[tau].append(retention_fraction)
+
+            # per-experiment aggregate
+            exp_tau, exp_mean, exp_n = [], [], []
+            for tau in sorted(exp_by_tau.keys()):
+                if exp_by_tau[tau]:
+                    exp_tau.append(tau)
+                    exp_mean.append(np.mean(exp_by_tau[tau]))
+                    exp_n.append(len(exp_by_tau[tau]))
+            per_experiment[experimentID] = {
+                "tau": np.array(exp_tau),
+                "Sn": np.array(exp_mean),
+                "N_measurements": np.array(exp_n),
+            }
 
         # aggregate
         tau_values, Sn_values, Sn_std_values, N_measurements_values = [], [], [], []
@@ -243,6 +264,7 @@ def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time):
             "Sn": np.array(Sn_values),
             "Sn_std": np.array(Sn_std_values),
             "N_measurements": np.array(N_measurements_values),
+            "per_experiment": per_experiment,
         }
 
         print(f"  Computed retention curve with {len(tau_values)} time points")
@@ -290,6 +312,7 @@ def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_ti
 
         experiments_for_condition = key_file[key_file["condition"] == condition]
         delta_r_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
+        per_experiment = {}
 
         for _, row in experiments_for_condition.iterrows():
             experimentID = row["experimentID"]
@@ -299,11 +322,13 @@ def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_ti
                 continue
 
             t_graphs = graphs_dict[experimentID]
+            exp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
 
             for t0_idx in range(len(t_graphs) - 1):
                 G_t0 = t_graphs[t0_idx]
 
-                for i, j in G_t0.edges():
+                for i, j in G_t0.edges():  # loop over all edges
+                    # access renamed nodes x and y pointing to POSITION_
                     ri_t0 = np.array([G_t0.nodes[i]["x"], G_t0.nodes[i]["y"]])
                     rj_t0 = np.array([G_t0.nodes[j]["x"], G_t0.nodes[j]["y"]])
                     d_ij_t0 = ri_t0 - rj_t0
@@ -323,6 +348,19 @@ def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_ti
 
                         delta_r = np.linalg.norm(d_ij_t - d_ij_t0)
                         delta_r_by_tau[tau].append(delta_r)
+                        exp_by_tau[tau].append(delta_r)
+
+            exp_tau, exp_mean, exp_n = [], [], []
+            for tau in sorted(exp_by_tau.keys()):
+                if exp_by_tau[tau]:
+                    exp_tau.append(tau)
+                    exp_mean.append(np.mean(exp_by_tau[tau]))
+                    exp_n.append(len(exp_by_tau[tau]))
+            per_experiment[experimentID] = {
+                "tau": np.array(exp_tau),
+                "delta_r_mean": np.array(exp_mean),
+                "N_pairs": np.array(exp_n),
+            }
 
         # aggregate
         tau_values, mean_values, std_values, sem_values, n_pairs_values = (
@@ -415,6 +453,7 @@ def compute_velocity_alignment_curves(
 
         experiments = key_file[key_file["condition"] == condition]
         dot_by_tau = {tau: [] for tau in range(0, max_tau + 1)}
+        per_experiment = {}
 
         for _, row in experiments.iterrows():
             experimentID = row["experimentID"]
@@ -423,6 +462,7 @@ def compute_velocity_alignment_curves(
                 continue
 
             t_graphs = graphs_dict[experimentID]
+            exp_by_tau = {tau: [] for tau in range(0, max_tau + 1)}
 
             # pre-compute velocities
             vel_cache = {}
@@ -434,8 +474,8 @@ def compute_velocity_alignment_curves(
             for t0_idx in range(len(t_graphs) - 1):
                 G_t0 = t_graphs[t0_idx]
 
-                for i, j in G_t0.edges():
-                    vi = vel_cache.get((i, t0_idx))
+                for i, j in G_t0.edges():   # loop over all edges
+                    vi = vel_cache.get((i, t0_idx))  # get the velocity in time forward from cache
                     if vi is None:
                         continue
 
@@ -446,12 +486,12 @@ def compute_velocity_alignment_curves(
                     else:
                         vi_use = vi
 
-                    for tau in range(0, max_tau + 1):
+                    for tau in range(0, max_tau + 1):  # loop over time
                         tj_idx = t0_idx + tau
-                        if tj_idx >= len(t_graphs) - 1:
+                        if tj_idx >= len(t_graphs) - 1:  # exit condition time > graph time points
                             break
 
-                        vj = vel_cache.get((j, tj_idx))
+                        vj = vel_cache.get((j, tj_idx))  # get velocity in time forward from cache
                         if vj is None:
                             continue
 
@@ -462,7 +502,22 @@ def compute_velocity_alignment_curves(
                         else:
                             vj_use = vj
 
+                        # correlation between neighbors, does not account for
+                        # relative motion, or staying spatially together
                         dot_by_tau[tau].append(np.dot(vi_use, vj_use))
+                        exp_by_tau[tau].append(np.dot(vi_use, vj_use))
+
+            exp_tau, exp_mean, exp_n = [], [], []
+            for tau in sorted(exp_by_tau.keys()):
+                if exp_by_tau[tau]:
+                    exp_tau.append(tau)
+                    exp_mean.append(np.mean(exp_by_tau[tau]))
+                    exp_n.append(len(exp_by_tau[tau]))
+            per_experiment[experimentID] = {
+                "tau": np.array(exp_tau),
+                "C_mean": np.array(exp_mean),
+                "N_pairs": np.array(exp_n),
+            }
 
         # aggregate
         tau_vals, mean_vals, std_vals, sem_vals, n_vals = [], [], [], [], []
@@ -481,6 +536,7 @@ def compute_velocity_alignment_curves(
             "C_std": np.array(std_vals),
             "C_sem": np.array(sem_vals),
             "N_pairs": np.array(n_vals),
+            "per_experiment": per_experiment,
         }
 
         print(
@@ -522,6 +578,8 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
         dy2_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
         msd_par_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
         msd_perp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
+        per_experiment_pair = {}
+        per_experiment_msd = {}
 
         for _, row in experiments.iterrows():
             experimentID = row["experimentID"]
@@ -530,6 +588,11 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
                 continue
 
             t_graphs = graphs_dict[experimentID]
+
+            exp_dx2 = {tau: [] for tau in range(1, max_tau + 1)}
+            exp_dy2 = {tau: [] for tau in range(1, max_tau + 1)}
+            exp_mp = {tau: [] for tau in range(1, max_tau + 1)}
+            exp_mr = {tau: [] for tau in range(1, max_tau + 1)}
 
             # --- Pair separation components ---
             for t0_idx in range(len(t_graphs) - 1):
@@ -541,8 +604,8 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
                     xj_t0 = G_t0.nodes[j]["x"]
                     yj_t0 = G_t0.nodes[j]["y"]
 
-                    sep_x_t0 = xi_t0 - xj_t0
-                    sep_y_t0 = yi_t0 - yj_t0
+                    sep_x_t0 = xi_t0 - xj_t0  # How far apart are I and J in the x
+                    sep_y_t0 = yi_t0 - yj_t0  # How far apart are I and J in the y
 
                     for tau in range(1, max_tau + 1):
                         t_idx = t0_idx + tau
@@ -558,11 +621,13 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
                         xj_t = G_t.nodes[j]["x"]
                         yj_t = G_t.nodes[j]["y"]
 
-                        dx = (xi_t - xj_t) - sep_x_t0
-                        dy = (yi_t - yj_t) - sep_y_t0
+                        dx = (xi_t - xj_t) - sep_x_t0  # relative separation over time
+                        dy = (yi_t - yj_t) - sep_y_t0  # relative separation over time
 
-                        dx2_by_tau[tau].append(dx ** 2)
-                        dy2_by_tau[tau].append(dy ** 2)
+                        dx2_by_tau[tau].append(dx ** 2)  # Mean squared displacement
+                        dy2_by_tau[tau].append(dy ** 2)  # Mean squared displacement
+                        exp_dx2[tau].append(dx ** 2)
+                        exp_dy2[tau].append(dy ** 2)
 
             # --- Self-MSD components ---
             for t0_idx in range(len(t_graphs)):
@@ -586,6 +651,37 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
 
                         msd_par_by_tau[tau].append(dx_self ** 2)
                         msd_perp_by_tau[tau].append(dy_self ** 2)
+                        exp_mp[tau].append(dx_self ** 2)
+                        exp_mr[tau].append(dy_self ** 2)
+
+            # per-experiment aggregates
+            p_tau, p_dx2, p_dy2, p_n = [], [], [], []
+            for tau in sorted(exp_dx2.keys()):
+                if exp_dx2[tau]:
+                    p_tau.append(tau)
+                    p_dx2.append(np.mean(exp_dx2[tau]))
+                    p_dy2.append(np.mean(exp_dy2[tau]))
+                    p_n.append(len(exp_dx2[tau]))
+            per_experiment_pair[experimentID] = {
+                "tau": np.array(p_tau),
+                "dx2_mean": np.array(p_dx2),
+                "dy2_mean": np.array(p_dy2),
+                "N_pairs": np.array(p_n),
+            }
+
+            m_tau, m_mp, m_mr, m_n = [], [], [], []
+            for tau in sorted(exp_mp.keys()):
+                if exp_mp[tau]:
+                    m_tau.append(tau)
+                    m_mp.append(np.mean(exp_mp[tau]))
+                    m_mr.append(np.mean(exp_mr[tau]))
+                    m_n.append(len(exp_mp[tau]))
+            per_experiment_msd[experimentID] = {
+                "tau": np.array(m_tau),
+                "msd_par_mean": np.array(m_mp),
+                "msd_perp_mean": np.array(m_mr),
+                "N_cells": np.array(m_n),
+            }
 
         # --- Aggregate pair separation ---
         tau_vals_p, dx2_m, dx2_s, dx2_se, dy2_m, dy2_s, dy2_se, n_pairs = (
@@ -613,6 +709,7 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
             "dy2_std": np.array(dy2_s),
             "dy2_sem": np.array(dy2_se),
             "N_pairs": np.array(n_pairs),
+            "per_experiment": per_experiment_pair,
         }
 
         # --- Aggregate self-MSD ---
@@ -641,6 +738,7 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
             "msd_perp_std": np.array(mr_s),
             "msd_perp_sem": np.array(mr_se),
             "N_cells": np.array(n_cells),
+            "per_experiment": per_experiment_msd,
         }
 
         print(
@@ -657,4 +755,69 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
         )
 
     return pair_sep, msd_aniso
+
+# ---------------------------------------------------------------------------
+# Cross-experiment (replicate-level) aggregation for honest error bars
+# ---------------------------------------------------------------------------
+
+def cross_experiment_stats(per_experiment_dict, value_key):
+    """Aggregate per-experiment curves across replicates into mean ± SEM.
+
+    Within one experiment, samples used to compute the lag-τ mean are highly
+    correlated (overlapping time windows along the same trajectories), so the
+    within-experiment ``std / sqrt(N)`` badly under-estimates the uncertainty
+    on the curve.  Different experiments (biological replicates) are, however,
+    statistically independent realisations.  This helper computes mean and
+    SEM across replicates on the common τ grid, which is the frequentist-
+    correct error bar for between-condition comparisons.
+
+    Parameters
+    ----------
+    per_experiment_dict : dict
+        ``{experimentID: {"tau": array, value_key: array, ...}}``
+        as returned under the ``"per_experiment"`` field of the condition-
+        level dictionaries from the other functions in this module.
+    value_key : str
+        Key of the per-experiment curve to aggregate (e.g. ``"Sn"``,
+        ``"delta_r_mean"``, ``"C_mean"``, ``"dx2_mean"``, ``"msd_par_mean"``).
+
+    Returns
+    -------
+    dict with keys ``tau``, ``mean``, ``sem``, ``std``, ``n_experiments``.
+        Each τ entry uses only experiments that actually have a value at
+        that τ (so ``n_experiments`` can vary with τ if tracking lengths
+        differ).
+    """
+    # collect tau union
+    all_taus = set()
+    for exp_data in per_experiment_dict.values():
+        all_taus.update(exp_data["tau"].tolist())
+    taus_sorted = np.array(sorted(all_taus))
+
+    means, sems, stds, ns = [], [], [], []
+    out_taus = []
+    for tau in taus_sorted:
+        vals = []
+        for exp_data in per_experiment_dict.values():
+            idx = np.where(exp_data["tau"] == tau)[0]
+            if len(idx) == 1:
+                vals.append(exp_data[value_key][idx[0]])
+        if len(vals) >= 1:
+            out_taus.append(tau)
+            vals = np.asarray(vals, dtype=float)
+            means.append(np.mean(vals))
+            stds.append(np.std(vals, ddof=1) if len(vals) > 1 else 0.0)
+            sems.append(
+                np.std(vals, ddof=1) / np.sqrt(len(vals))
+                if len(vals) > 1 else 0.0
+            )
+            ns.append(len(vals))
+
+    return {
+        "tau": np.array(out_taus),
+        "mean": np.array(means),
+        "sem": np.array(sems),
+        "std": np.array(stds),
+        "n_experiments": np.array(ns),
+    }
 

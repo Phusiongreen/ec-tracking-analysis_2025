@@ -10,6 +10,7 @@ from pathlib import Path
 import dabest
 import matplotlib
 import matplotlib.pyplot as plt
+import networkx as nx
 import pandas as pd
 import seaborn as sns
 
@@ -217,6 +218,16 @@ for experimentID in velocity_df["EXPERIMENT_ID"].unique():
     )
      # Add title showing the experiment ID and condition
     ax = plt.gca()
+    # clamp axes to the data extent — matplotlib's default 5 % margin
+    # otherwise produces a visible white band between the plot frame and
+    # the first nodes (the frame is the axes spine at the padded limit).
+    # network_plot_2D stores node positions as (y, x) tuples in the "pos" attr.
+    _pos = nx.get_node_attributes(G_delaunay, "pos")
+    if _pos:
+        _ys, _xs = zip(*_pos.values())
+        ax.set_xlim(min(_xs), max(_xs))
+        ax.set_ylim(min(_ys), max(_ys))
+        ax.set_aspect("equal", adjustable="box")
     ax.set_title(f"Experiment {experimentID} - {condition}", fontsize=14, pad=15)
 
     plt.savefig(output_folder / subfolder / f"delaunay_graph_{experimentID}.pdf")

@@ -6,9 +6,86 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.ticker import FuncFormatter
 import sys
-sys.path.append("../")
+sys.path.append("../ec-tracking-analysis_2025/")
 from src.computation import gaps_for_track
 from src.io import create_path_recursively
+
+
+# ---------------------------------------------------------------------------
+# Axis-limit helpers — keep trajectory / velocity / migration plots from
+# being silently clipped by hard-coded literal limits.  All helpers accept
+# either a numeric value (used directly) or the string "auto" (data-driven,
+# rounded up to the next *step* units so the border is never tighter than
+# the longest track / highest speed).
+# ---------------------------------------------------------------------------
+
+def is_auto(v) -> bool:
+    """Return True if v is the string 'auto' (case-insensitive)."""
+    return isinstance(v, str) and v.strip().lower() == "auto"
+
+
+def round_up_step(x: float, step: float = 100.0) -> float:
+    """Round *x* up to the next multiple of *step*, minimum = *step*."""
+    return max(step, float(np.ceil(x / step) * step))
+
+
+def resolve_abs_max(cfg, *arrays, default: float = 2000.0, step: float = 100.0) -> float:
+    """Resolve an absolute upper limit from a YAML-style *cfg* value.
+
+    cfg : number | "auto"
+        Number → used directly.  "auto" → fit data extent.
+    *arrays : 1-D array-likes
+        Data arrays to inspect when cfg == "auto".  NaNs are ignored.
+    """
+    if is_auto(cfg):
+        arrs = [np.asarray(a, dtype=float).ravel() for a in arrays if a is not None]
+        arrs = [a for a in arrs if a.size]
+        if not arrs:
+            return float(default)
+        m = float(np.nanmax(np.concatenate(arrs)))
+        return round_up_step(m, step)
+    return float(cfg)
+
+
+def resolve_halfrange(cfg, *arrays, default: float = 1000.0, step: float = 100.0) -> float:
+    """Resolve a symmetric half-range ``[-v, +v]`` from a YAML-style *cfg*.
+
+    cfg : number | "auto"
+        Number → used directly.  "auto" → use max(|data|).
+    """
+    if is_auto(cfg):
+        arrs = [np.asarray(a, dtype=float).ravel() for a in arrays if a is not None]
+        arrs = [a for a in arrs if a.size]
+        if not arrs:
+            return float(default)
+        m = float(np.nanmax(np.abs(np.concatenate(arrs))))
+        return round_up_step(m, step)
+    return float(cfg)
+
+
+def resolve_interval(cfg, *arrays, default=(0.0, 1.0), step: float = 1.0):
+    """Resolve a (low, high) interval from a YAML-style *cfg*.
+
+    cfg : (low, high) | "auto"
+        Two-tuple/list → used directly.  "auto" → ``(min(data), max(data))``,
+        each bound rounded out to the next multiple of *step*.
+    """
+    if is_auto(cfg):
+        arrs = [np.asarray(a, dtype=float).ravel() for a in arrays if a is not None]
+        arrs = [a for a in arrs if a.size]
+        if not arrs:
+            return (float(default[0]), float(default[1]))
+        allv = np.concatenate(arrs)
+        lo = float(np.nanmin(allv))
+        hi = float(np.nanmax(allv))
+        # round outward to the next *step*
+        lo = float(np.floor(lo / step) * step)
+        hi = float(np.ceil(hi / step) * step)
+        if hi <= lo:
+            hi = lo + step
+        return (lo, hi)
+    lo, hi = cfg
+    return (float(lo), float(hi))
 
 
 sns.set_theme(

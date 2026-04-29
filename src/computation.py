@@ -20,10 +20,18 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
 
     tracking_data_df = pd.DataFrame()
 
-    column_dtypes = {'TRACK_ID': 'int16',
+    # IMPORTANT — coordinate precision
+    # POSITION_X/Y must be at least float32.  Using float16 (previous default)
+    # snaps positions onto the half-precision grid:  values in
+    # [1024, 2048) µm collapse to 1-µm steps and [2048, 4096) µm to 2-µm
+    # steps, which visibly piles cells up along discrete lanes near image
+    # boundaries in the Delaunay graph and corrupts all downstream
+    # neighbour / velocity / displacement analyses.  float32 gives ~7
+    # significant digits — sub-nanometre resolution for microscopy stages.
+    column_dtypes = {'TRACK_ID': 'int32',
                      'FRAME': 'int16',
-                     'POSITION_X': 'float16',
-                     'POSITION_Y': 'float16',
+                     'POSITION_X': 'float32',
+                     'POSITION_Y': 'float32',
                      'POSITION_T': 'float32'}
 
     gap_analysis = parameters["gap_analysis"]
@@ -32,7 +40,6 @@ def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
 
     for index, row in key_file.iterrows():
         print("Processing file: ", row["filename"])
-        # data = pd.read_csv(base_folder / row["filename"], low_memory=False).drop([0, 1, 2]) #this is now done at 00_correct_time_points_from_trackmate.ipynb
         data = pd.read_csv(output_folder / "time_correction" / row["filename"], low_memory=False)
 
         # df copy to work on

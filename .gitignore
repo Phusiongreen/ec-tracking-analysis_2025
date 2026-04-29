@@ -9,7 +9,7 @@ plots
 
 # VSCode workspace settings
 .vscode/
-data/*
+../data/*
 
 
 # Byte-compiled / optimized / DLL files

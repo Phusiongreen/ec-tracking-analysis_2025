@@ -33,6 +33,9 @@ frames_per_hour: 6 # number of frames per hour
 # time correction parameters (notebook 00)
 
 trackmate_header_rows: 4  # number of non-data header rows to drop from raw TrackMate CSVs
+edge_exclusion_um: 0.0    # drop rows within this many µm of the per-file min/max of POSITION_X/Y.
+                          # Compensates for the TrackMate detector bias that piles spots up along the
+                          # outermost pixel rows/columns of the field of view. Set to 0 to disable.
 
 # quality control parameters
 
@@ -46,6 +49,12 @@ observation_time: [0, null] # in frames. Either value can be null to auto-detect
 allow_tracks_shorter_than_observation_time: true # if True, tracks shorter than observation_time will be included in the plot
 number_of_tracks_per_file: 100
 number_of_tracks_per_condition: 300
+
+# Axis limits for trajectory plots (notebook 03). Use either a number (µm) or
+# the string "auto" to fit the plotted data (rounded to the next 100 µm).
+trajectory_plot_abs_max_um: 2000        # per-experiment plot (absolute POSITION_X/Y), limits = [0, value]
+trajectory_plot_origin_halfrange_um: 1000  # per-condition×treatment plot (X_from_origin), limits = [-v, +v]
+trajectory_plot_treatment_halfrange_um: auto  # per-treatment plot (X_from_origin), limits = [-v, +v]
 
 ## velocity colormap
 
@@ -73,9 +82,12 @@ drug_addition_after_flow_h: 4.0  # hours after flow start when drug is added
 drug_marker_style: "both"  # 'vline', 'asterisk', or 'both'
 drug_marker_color: "darkorange"
 
-# flow direction splitting parameters (notebook 07)
+# Axis limits for the per-experiment velocity-vs-time plot in notebook 07.
+# Either a [low, high] pair or the string "auto" (fit the data, rounded out).
+migration_speed_time_xlim_h: "auto"             # x in hours, always clipped to [0, …]
+migration_speed_velocity_ylim_um_h: "auto"      # y in µm/h
 
-target_position_t: 15840.0  # POSITION_T (seconds) at which to evaluate flow direction for splitting
+# flow direction splitting parameters (notebook 07)
 with_flow_threshold: 5.0  # um/h, vel_x above this = "with flow"
 against_flow_threshold: -5.0  # um/h, vel_x below this = "against flow"
 
