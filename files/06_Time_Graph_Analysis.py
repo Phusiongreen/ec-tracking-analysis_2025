@@ -84,6 +84,9 @@ plot_arrows = True
 
 distance_threshold = parameters["distance_threshold"]
 
+n_jobs = parameters.get("n_jobs", None)
+print("Parallel graph construction n_jobs:", n_jobs if n_jobs is not None else "all cores")
+
 
 # In[5]:
 
@@ -183,13 +186,12 @@ def plot_curve_with_trust(
     return ax
 
 
-# In[6]:
 
 # In[6]:
 
 # Build Delaunay graphs per time point for each experiment
 graphs, observation_period_dfs = build_time_graphs(
-    key_file, data_folder, observation_time, distance_threshold
+    key_file, data_folder, observation_time, distance_threshold, n_jobs=n_jobs
 )
 
 
@@ -234,7 +236,7 @@ for condition in key_file["condition"].unique():
 
 # Compute neighbor lifetimes per condition
 neighbor_lifetimes_by_condition = compute_neighbor_lifetimes(
-    graphs, observation_period_dfs, key_file
+    graphs, observation_period_dfs, key_file, n_jobs=n_jobs
 )
 
 
@@ -326,7 +328,7 @@ plt.show()
 # In[11]:
 
 # Compute the neighbor retention / survival curves
-survival_curves = compute_neighbor_retention_curve(graphs, key_file, observation_time)
+survival_curves = compute_neighbor_retention_curve(graphs, key_file, observation_time, n_jobs=n_jobs)
 
 
 # In[12]:
@@ -539,7 +541,7 @@ print("="*70)
 # In[16]:
 
 # Compute cage-relative neighbor displacement curves
-displacement_curves = compute_relative_neighbor_displacement(graphs, key_file, observation_time)
+displacement_curves = compute_relative_neighbor_displacement(graphs, key_file, observation_time, n_jobs=n_jobs)
 
 
 # In[17]:
@@ -655,11 +657,11 @@ print("=" * 80)
 
 # Compute velocity alignment curves (normalized and unnormalized)
 alignment_curves_norm = compute_velocity_alignment_curves(
-    graphs, key_file, observation_time, use_unnormalized=False
+    graphs, key_file, observation_time, use_unnormalized=False, n_jobs=n_jobs
 )
 
 alignment_curves_unnorm = compute_velocity_alignment_curves(
-    graphs, key_file, observation_time, use_unnormalized=True
+    graphs, key_file, observation_time, use_unnormalized=True, n_jobs=n_jobs
 )
 
 
@@ -916,7 +918,7 @@ print("=" * 80)
 
 # Compute flow-decomposed anisotropic separation and MSD
 pair_sep_curves, msd_aniso_curves = compute_anisotropic_separation_and_msd(
-    graphs, key_file, observation_time
+    graphs, key_file, observation_time, n_jobs=n_jobs
 )
 
 

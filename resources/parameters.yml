@@ -64,6 +64,7 @@ velocity_colormap_limits: [-20.0, 20.0]  # [min, max] velocity in um/h for color
 
 distance_threshold: 50  # um, Delaunay graph edge distance threshold
 num_subsample: 5  # number of tracks to sample for diagnostic histograms
+n_jobs: null  # number of parallel worker processes for graph construction (null = use all CPU cores)
 
 # parameters for velocity computation
 

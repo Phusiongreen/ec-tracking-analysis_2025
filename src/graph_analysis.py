@@ -6,17 +6,48 @@ computing neighbor lifetimes / retention curves, cage-relative
 displacement, velocity alignment, and anisotropic MSD.
 """
 
+import os
 import numpy as np
 import pandas as pd
 import networkx as nx
+from concurrent.futures import ProcessPoolExecutor
 from griottes import generate_delaunay_graph
+
+
+# ---------------------------------------------------------------------------
+# Module-level worker (must be at module scope for ProcessPoolExecutor pickling)
+# ---------------------------------------------------------------------------
+
+def _build_graph_at_frame(args):
+    """Build and relabel a Delaunay graph for a single frame.
+
+    Parameters
+    ----------
+    args : tuple
+        ``(t, frame_df, distance_threshold)``
+
+    Returns
+    -------
+    tuple
+        ``(t, G_delaunay)`` — frame index and the relabelled graph.
+    """
+    t, frame_df, distance_threshold = args
+    G_delaunay = generate_delaunay_graph(
+        frame_df[frame_df.columns],
+        descriptors=frame_df.columns,
+        distance=distance_threshold,
+        image_is_2D=True,
+    )
+    mapping = {n: G_delaunay.nodes[n]["TRACK_ID"] for n in G_delaunay.nodes}
+    G_delaunay = nx.relabel_nodes(G_delaunay, mapping)
+    return t, G_delaunay
 
 
 # ---------------------------------------------------------------------------
 # Graph construction
 # ---------------------------------------------------------------------------
 
-def build_time_graphs(key_file, data_folder, observation_time, distance_threshold):
+def build_time_graphs(key_file, data_folder, observation_time, distance_threshold, n_jobs=None):
     """Build Delaunay graphs per frame for every experiment in *key_file*.
 
     Parameters
@@ -28,6 +59,9 @@ def build_time_graphs(key_file, data_folder, observation_time, distance_threshol
     observation_time : tuple (start_frame, end_frame)
     distance_threshold : float
         Maximum edge length for the Delaunay graph.
+    n_jobs : int or None
+        Number of worker processes for parallel graph construction.
+        ``None`` uses ``os.cpu_count()``.
 
     Returns
     -------
@@ -65,24 +99,29 @@ def build_time_graphs(key_file, data_folder, observation_time, distance_threshol
         )
         obs_df_renamed["label"] = obs_df_renamed["TRACK_ID"]
 
-        t_graphs = []
-        for t in range(observation_time[0], observation_time[1]):
-            frame_df = obs_df_renamed[obs_df_renamed["FRAME"] == t].reset_index(drop=True)
 
-            print("Generating graph at time point %d ..." % t)
-            G_delaunay = generate_delaunay_graph(
-                frame_df[frame_df.columns],
-                descriptors=frame_df.columns,
-                distance=distance_threshold,
-                image_is_2D=True,
+
+        # Build one task tuple per frame
+        frames = range(observation_time[0], observation_time[1])
+        tasks = [
+            (
+                t,
+                obs_df_renamed[obs_df_renamed["FRAME"] == t].reset_index(drop=True),
+                distance_threshold,
             )
-            print("Graph generated!")
+            for t in frames
+        ]
 
-            # relabel nodes to TRACK_IDs
-            mapping = {n: G_delaunay.nodes[n]["TRACK_ID"] for n in G_delaunay.nodes}
-            G_delaunay = nx.relabel_nodes(G_delaunay, mapping)
+        print(
+            f"  Building {len(tasks)} frame graphs in parallel "
+            f"(n_jobs={n_jobs or os.cpu_count()}) …"
+        )
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            results = list(pool.map(_build_graph_at_frame, tasks))
 
-            t_graphs.append(G_delaunay)
+        # results come back in submission order (map preserves order)
+        t_graphs = [G for _, G in results]
+        print(f"  All {len(t_graphs)} graphs built.")
 
         graphs[experimentID] = t_graphs
 
@@ -93,7 +132,7 @@ def build_time_graphs(key_file, data_folder, observation_time, distance_threshol
 # Neighbor lifetimes
 # ---------------------------------------------------------------------------
 
-def compute_neighbor_lifetimes(graphs, observation_period_dfs, key_file):
+def compute_neighbor_lifetimes(graphs, observation_period_dfs, key_file, n_jobs=None):
     """Compute consecutive-neighbor lifetimes for every condition.
 
     Parameters
@@ -104,70 +143,45 @@ def compute_neighbor_lifetimes(graphs, observation_period_dfs, key_file):
         ``{experimentID: DataFrame}`` with at least a ``TRACK_ID`` column.
     key_file : pd.DataFrame
         Must contain ``condition`` and ``experimentID``.
+    n_jobs : int or None
+        Worker processes. ``None`` uses all CPU cores.
 
     Returns
     -------
     neighbor_lifetimes_by_condition : dict
         ``{condition: {track_id: {neighbor_id: lifetime_frames}}}``
     """
-    neighbor_lifetimes_by_condition = {}
+    # Build one task per unique experimentID that has data
+    tasks, seen = [], set()
+    for _, row in key_file.iterrows():
+        eid = row["experimentID"]
+        if eid in seen:
+            continue
+        seen.add(eid)
+        if eid not in graphs or eid not in observation_period_dfs:
+            print(f"  Skipping {eid} – missing graphs or tracking data")
+            continue
+        track_ids = observation_period_dfs[eid]["TRACK_ID"].unique().tolist()
+        tasks.append((eid, graphs[eid], track_ids))
 
-    for condition in key_file["condition"].unique():
-        print(f"\nAnalyzing condition: {condition}")
+    print(
+        f"\nComputing neighbor lifetimes for {len(tasks)} experiments "
+        f"(n_jobs={n_jobs or os.cpu_count()}) …"
+    )
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        results = list(pool.map(_lifetimes_worker, tasks))
 
-        experiments_for_condition = key_file[key_file["condition"] == condition]
-        neighbor_lifetimes_all_tracks = {}
-
-        for _, row in experiments_for_condition.iterrows():
-            experimentID = row["experimentID"]
-            print(f"  Processing experiment: {experimentID}")
-
-            if experimentID not in observation_period_dfs:
-                print(f"    Skipping - no data for {experimentID}")
-                continue
-
-            observation_period_df = observation_period_dfs[experimentID]
-
-            if experimentID not in graphs:
-                print(f"    Skipping - no graphs for {experimentID}")
-                continue
-
-            t_graphs = graphs[experimentID]
-            trackIDs = observation_period_df["TRACK_ID"].unique()
-
-            for track_id in trackIDs:
-                neighbor_lifetimes = {}
-
-                t_graphs0 = t_graphs[0]
-                if track_id not in t_graphs0.nodes(data="TRACK_ID"):
-                    continue
-
-                neighbors0 = list(t_graphs0.neighbors(track_id))
-                for neighbor in neighbors0:
-                    neighbor_lifetimes[neighbor] = 1
-
-                for t, G_delaunay in enumerate(t_graphs[1:], start=1):
-                    node_track = [
-                        n
-                        for n, d in G_delaunay.nodes(data=True)
-                        if d.get("TRACK_ID") == track_id
-                    ]
-                    if len(node_track) > 1:
-                        continue
-                    elif len(node_track) == 0:
-                        break
-
-                    a = node_track[0]
-                    neighbors_t = G_delaunay[a]
-
-                    for neighbor in neighbors_t:
-                        if neighbor in neighbor_lifetimes:
-                            if neighbor_lifetimes[neighbor] == t:
-                                neighbor_lifetimes[neighbor] += 1
-
-                neighbor_lifetimes_all_tracks[track_id] = neighbor_lifetimes
-
-        neighbor_lifetimes_by_condition[condition] = neighbor_lifetimes_all_tracks
+    # map experimentID → condition (first match wins)
+    exp_to_condition = (
+        key_file.drop_duplicates("experimentID")
+        .set_index("experimentID")["condition"]
+        .to_dict()
+    )
+    neighbor_lifetimes_by_condition = {c: {} for c in key_file["condition"].unique()}
+    for eid, exp_lifetimes in results:
+        cond = exp_to_condition.get(eid)
+        if cond is not None:
+            neighbor_lifetimes_by_condition[cond].update(exp_lifetimes)
 
     return neighbor_lifetimes_by_condition
 
@@ -176,102 +190,90 @@ def compute_neighbor_lifetimes(graphs, observation_period_dfs, key_file):
 # Neighbor retention / survival curve
 # ---------------------------------------------------------------------------
 
-def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time):
+def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time, n_jobs=None):
     """Compute the neighbor retention (survival) curve Sₙ(τ) per condition.
 
     For each time lag τ, computes the fraction of original neighbours still
     present:  Sₙ(τ) = ⟨|Nᵢ(t₀) ∩ Nᵢ(t₀+τ)| / |Nᵢ(t₀)|⟩
 
+    Parameters
+    ----------
+    n_jobs : int or None
+        Worker processes. ``None`` uses all CPU cores.
+
     Returns
     -------
     survival_curves : dict
-        ``{condition: {'tau', 'Sn', 'Sn_std', 'N_measurements'}}``
+        ``{condition: {'tau', 'Sn', 'Sn_std', 'N_measurements', 'per_experiment'}}``
     """
     start_frame, end_frame = observation_time
     max_tau = end_frame - start_frame - 1
 
+    tasks, seen = [], set()
+    for _, row in key_file.iterrows():
+        eid = row["experimentID"]
+        if eid in seen or eid not in graphs_dict:
+            continue
+        seen.add(eid)
+        tasks.append((eid, graphs_dict[eid], max_tau))
+
+    print(
+        f"\nComputing neighbor retention for {len(tasks)} experiments "
+        f"(n_jobs={n_jobs or os.cpu_count()}) …"
+    )
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        raw = list(pool.map(_retention_worker, tasks))
+
+    exp_data = {eid: by_tau for eid, by_tau in raw}
+
     survival_curves = {}
-
     for condition in key_file["condition"].unique():
-        print(f"\nComputing neighbor retention curve for condition: {condition}")
-
-        experiments_for_condition = key_file[key_file["condition"] == condition]
+        print(f"\nAggregating condition: {condition}")
         retention_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
         per_experiment = {}
 
-        for _, row in experiments_for_condition.iterrows():
-            experimentID = row["experimentID"]
-
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} - no graphs")
+        for _, row in key_file[key_file["condition"] == condition].iterrows():
+            eid = row["experimentID"]
+            if eid not in exp_data:
+                print(f"  Skipping {eid} – no graphs")
                 continue
+            exp_by_tau = exp_data[eid]
+            for tau, vals in exp_by_tau.items():
+                retention_by_tau[tau].extend(vals)
 
-            t_graphs = graphs_dict[experimentID]
-            exp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-
-
-            for t0_idx in range(len(t_graphs) - 1):
-                G_t0 = t_graphs[t0_idx]
-
-                for node_id in G_t0.nodes():
-                    neighbors_t0 = set(G_t0.neighbors(node_id))
-                    if len(neighbors_t0) == 0:
-                        continue
-
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau  # t_idx relative to t0_idx
-                        if t_idx >= len(t_graphs):   # stop condition for relative iteration
-                            break
-
-                        # get graph for t_idx
-                        G_t = t_graphs[t_idx]
-
-                        # check if node_id still present at that time point
-                        if node_id not in G_t.nodes():
-                            continue
-
-                        # calculate neighborhood retention fraction for node_id
-                        neighbors_t = set(G_t.neighbors(node_id))
-                        intersection_size = len(neighbors_t0 & neighbors_t)
-                        retention_fraction = intersection_size / len(neighbors_t0)
-                        retention_by_tau[tau].append(retention_fraction)
-                        exp_by_tau[tau].append(retention_fraction)
-
-            # per-experiment aggregate
             exp_tau, exp_mean, exp_n = [], [], []
-            for tau in sorted(exp_by_tau.keys()):
+            for tau in sorted(exp_by_tau):
                 if exp_by_tau[tau]:
                     exp_tau.append(tau)
                     exp_mean.append(np.mean(exp_by_tau[tau]))
                     exp_n.append(len(exp_by_tau[tau]))
-            per_experiment[experimentID] = {
+            per_experiment[eid] = {
                 "tau": np.array(exp_tau),
                 "Sn": np.array(exp_mean),
                 "N_measurements": np.array(exp_n),
             }
 
-        # aggregate
-        tau_values, Sn_values, Sn_std_values, N_measurements_values = [], [], [], []
-        for tau in sorted(retention_by_tau.keys()):
-            if len(retention_by_tau[tau]) > 0:
+        tau_values, Sn_values, Sn_std_values, N_values = [], [], [], []
+        for tau in sorted(retention_by_tau):
+            if retention_by_tau[tau]:
                 tau_values.append(tau)
                 Sn_values.append(np.mean(retention_by_tau[tau]))
                 Sn_std_values.append(np.std(retention_by_tau[tau]))
-                N_measurements_values.append(len(retention_by_tau[tau]))
+                N_values.append(len(retention_by_tau[tau]))
 
         survival_curves[condition] = {
             "tau": np.array(tau_values),
             "Sn": np.array(Sn_values),
             "Sn_std": np.array(Sn_std_values),
-            "N_measurements": np.array(N_measurements_values),
+            "N_measurements": np.array(N_values),
             "per_experiment": per_experiment,
         }
 
         print(f"  Computed retention curve with {len(tau_values)} time points")
-        if len(N_measurements_values) > 0:
+        if N_values:
             print(
                 f"  Average measurements per time point: "
-                f"{np.mean(N_measurements_values):.0f}"
+                f"{np.mean(N_values):.0f}"
             )
 
     return survival_curves
@@ -287,88 +289,250 @@ def exponential_decay(tau, S0, k):
 
 
 # ---------------------------------------------------------------------------
+# Per-experiment parallel workers  (module-scope required for pickling)
+# ---------------------------------------------------------------------------
+
+def _lifetimes_worker(args):
+    """Compute neighbor lifetimes for all tracks in one experiment.
+
+    Parameters: ``(experimentID, t_graphs, trackIDs)``
+    Returns: ``(experimentID, {track_id: {neighbor_id: lifetime_frames}})``
+    """
+    experimentID, t_graphs, trackIDs = args
+    result = {}
+    if not t_graphs:
+        return experimentID, result
+    G0 = t_graphs[0]
+    for track_id in trackIDs:
+        if track_id not in G0:
+            continue
+        neighbor_lifetimes = {nb: 1 for nb in G0.neighbors(track_id)}
+        for t, G in enumerate(t_graphs[1:], start=1):
+            if track_id not in G:
+                break
+            for nb in G[track_id]:
+                if neighbor_lifetimes.get(nb) == t:
+                    neighbor_lifetimes[nb] += 1
+        result[track_id] = neighbor_lifetimes
+    return experimentID, result
+
+
+def _retention_worker(args):
+    """Retention fractions for all (node, t0, τ) triples in one experiment.
+
+    Parameters: ``(experimentID, t_graphs, max_tau)``
+    Returns: ``(experimentID, {tau: [fractions]})``
+    """
+    experimentID, t_graphs, max_tau = args
+    exp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
+    for t0_idx in range(len(t_graphs) - 1):
+        G_t0 = t_graphs[t0_idx]
+        for node_id in G_t0.nodes():
+            nb0 = set(G_t0.neighbors(node_id))
+            if not nb0:
+                continue
+            for tau in range(1, max_tau + 1):
+                t_idx = t0_idx + tau
+                if t_idx >= len(t_graphs):
+                    break
+                G_t = t_graphs[t_idx]
+                if node_id not in G_t:
+                    continue
+                nb_t = set(G_t.neighbors(node_id))
+                exp_by_tau[tau].append(len(nb0 & nb_t) / len(nb0))
+    return experimentID, exp_by_tau
+
+
+def _displacement_worker(args):
+    """Cage-relative displacement for all edge-pairs in one experiment.
+
+    Parameters: ``(experimentID, t_graphs, max_tau)``
+    Returns: ``(experimentID, {tau: [delta_r values]})``
+    """
+    experimentID, t_graphs, max_tau = args
+    exp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
+    for t0_idx in range(len(t_graphs) - 1):
+        G_t0 = t_graphs[t0_idx]
+        for i, j in G_t0.edges():
+            d_t0 = np.array([
+                G_t0.nodes[i]["x"] - G_t0.nodes[j]["x"],
+                G_t0.nodes[i]["y"] - G_t0.nodes[j]["y"],
+            ])
+            for tau in range(1, max_tau + 1):
+                t_idx = t0_idx + tau
+                if t_idx >= len(t_graphs):
+                    break
+                G_t = t_graphs[t_idx]
+                if i not in G_t or j not in G_t:
+                    continue
+                d_t = np.array([
+                    G_t.nodes[i]["x"] - G_t.nodes[j]["x"],
+                    G_t.nodes[i]["y"] - G_t.nodes[j]["y"],
+                ])
+                exp_by_tau[tau].append(np.linalg.norm(d_t - d_t0))
+    return experimentID, exp_by_tau
+
+
+def _alignment_worker(args):
+    """Velocity alignment dot-products for all edges in one experiment.
+
+    Parameters: ``(experimentID, t_graphs, max_tau, use_unnormalized)``
+    Returns: ``(experimentID, {tau: [dot-product values]})``
+    """
+    experimentID, t_graphs, max_tau, use_unnormalized = args
+    exp_by_tau = {tau: [] for tau in range(0, max_tau + 1)}
+    # pre-compute velocities
+    vel_cache = {}
+    for t_idx in range(len(t_graphs) - 1):
+        for nid in t_graphs[t_idx].nodes():
+            vel_cache[(nid, t_idx)] = _node_velocity(t_graphs, nid, t_idx)
+    for t0_idx in range(len(t_graphs) - 1):
+        G_t0 = t_graphs[t0_idx]
+        for i, j in G_t0.edges():
+            vi = vel_cache.get((i, t0_idx))
+            if vi is None:
+                continue
+            vi_use = vi if use_unnormalized else _unit(vi)
+            if vi_use is None:
+                continue
+            for tau in range(0, max_tau + 1):
+                tj_idx = t0_idx + tau
+                if tj_idx >= len(t_graphs) - 1:
+                    break
+                vj = vel_cache.get((j, tj_idx))
+                if vj is None:
+                    continue
+                vj_use = vj if use_unnormalized else _unit(vj)
+                if vj_use is None:
+                    continue
+                exp_by_tau[tau].append(np.dot(vi_use, vj_use))
+    return experimentID, exp_by_tau
+
+
+def _anisotropic_worker(args):
+    """Flow-decomposed pair separation and self-MSD for one experiment.
+
+    Parameters: ``(experimentID, t_graphs, max_tau)``
+    Returns: ``(experimentID, exp_dx2, exp_dy2, exp_mp, exp_mr)``
+        Each dict maps ``tau -> [values]``.
+    """
+    experimentID, t_graphs, max_tau = args
+    exp_dx2 = {tau: [] for tau in range(1, max_tau + 1)}
+    exp_dy2 = {tau: [] for tau in range(1, max_tau + 1)}
+    exp_mp  = {tau: [] for tau in range(1, max_tau + 1)}
+    exp_mr  = {tau: [] for tau in range(1, max_tau + 1)}
+
+    # --- Pair separation ---
+    for t0_idx in range(len(t_graphs) - 1):
+        G_t0 = t_graphs[t0_idx]
+        for i, j in G_t0.edges():
+            sx0 = G_t0.nodes[i]["x"] - G_t0.nodes[j]["x"]
+            sy0 = G_t0.nodes[i]["y"] - G_t0.nodes[j]["y"]
+            for tau in range(1, max_tau + 1):
+                t_idx = t0_idx + tau
+                if t_idx >= len(t_graphs):
+                    break
+                G_t = t_graphs[t_idx]
+                if i not in G_t or j not in G_t:
+                    continue
+                dx = (G_t.nodes[i]["x"] - G_t.nodes[j]["x"]) - sx0
+                dy = (G_t.nodes[i]["y"] - G_t.nodes[j]["y"]) - sy0
+                exp_dx2[tau].append(dx ** 2)
+                exp_dy2[tau].append(dy ** 2)
+
+    # --- Self-MSD ---
+    for t0_idx in range(len(t_graphs)):
+        G_t0 = t_graphs[t0_idx]
+        for nid in G_t0.nodes():
+            x0 = G_t0.nodes[nid]["x"]
+            y0 = G_t0.nodes[nid]["y"]
+            for tau in range(1, max_tau + 1):
+                t_idx = t0_idx + tau
+                if t_idx >= len(t_graphs):
+                    break
+                G_t = t_graphs[t_idx]
+                if nid not in G_t:
+                    continue
+                exp_mp[tau].append((G_t.nodes[nid]["x"] - x0) ** 2)
+                exp_mr[tau].append((G_t.nodes[nid]["y"] - y0) ** 2)
+
+    return experimentID, exp_dx2, exp_dy2, exp_mp, exp_mr
+
+
+# ---------------------------------------------------------------------------
 # Cage-relative neighbor displacement
 # ---------------------------------------------------------------------------
 
-def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_time):
+def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_time, n_jobs=None):
     """Compute cage-relative displacement ⟨δr(τ)⟩ per condition.
 
     For each initial neighbor pair (i, j) at time t₀, tracks how the
     relative separation vector changes over time lag τ.
 
+    Parameters
+    ----------
+    n_jobs : int or None
+        Worker processes. ``None`` uses all CPU cores.
+
     Returns
     -------
     displacement_curves : dict
         ``{condition: {'tau', 'delta_r_mean', 'delta_r_std',
-        'delta_r_sem', 'N_pairs'}}``
+        'delta_r_sem', 'N_pairs', 'per_experiment'}}``
     """
     start_frame, end_frame = observation_time
     max_tau = end_frame - start_frame - 1
 
+    tasks, seen = [], set()
+    for _, row in key_file.iterrows():
+        eid = row["experimentID"]
+        if eid in seen or eid not in graphs_dict:
+            continue
+        seen.add(eid)
+        tasks.append((eid, graphs_dict[eid], max_tau))
+
+    print(
+        f"\nComputing cage-relative displacement for {len(tasks)} experiments "
+        f"(n_jobs={n_jobs or os.cpu_count()}) …"
+    )
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        raw = list(pool.map(_displacement_worker, tasks))
+
+    exp_data = {eid: by_tau for eid, by_tau in raw}
+
     displacement_curves = {}
-
     for condition in key_file["condition"].unique():
-        print(f"\nComputing relative neighbor displacement for condition: {condition}")
-
-        experiments_for_condition = key_file[key_file["condition"] == condition]
+        print(f"\nAggregating condition: {condition}")
         delta_r_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
         per_experiment = {}
 
-        for _, row in experiments_for_condition.iterrows():
-            experimentID = row["experimentID"]
-
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} – no graphs")
+        for _, row in key_file[key_file["condition"] == condition].iterrows():
+            eid = row["experimentID"]
+            if eid not in exp_data:
+                print(f"  Skipping {eid} – no graphs")
                 continue
-
-            t_graphs = graphs_dict[experimentID]
-            exp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-
-            for t0_idx in range(len(t_graphs) - 1):
-                G_t0 = t_graphs[t0_idx]
-
-                for i, j in G_t0.edges():  # loop over all edges
-                    # access renamed nodes x and y pointing to POSITION_
-                    ri_t0 = np.array([G_t0.nodes[i]["x"], G_t0.nodes[i]["y"]])
-                    rj_t0 = np.array([G_t0.nodes[j]["x"], G_t0.nodes[j]["y"]])
-                    d_ij_t0 = ri_t0 - rj_t0
-
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
-                            break
-
-                        G_t = t_graphs[t_idx]
-                        if i not in G_t.nodes() or j not in G_t.nodes():
-                            continue
-
-                        ri_t = np.array([G_t.nodes[i]["x"], G_t.nodes[i]["y"]])
-                        rj_t = np.array([G_t.nodes[j]["x"], G_t.nodes[j]["y"]])
-                        d_ij_t = ri_t - rj_t
-
-                        delta_r = np.linalg.norm(d_ij_t - d_ij_t0)
-                        delta_r_by_tau[tau].append(delta_r)
-                        exp_by_tau[tau].append(delta_r)
+            exp_by_tau = exp_data[eid]
+            for tau, vals in exp_by_tau.items():
+                delta_r_by_tau[tau].extend(vals)
 
             exp_tau, exp_mean, exp_n = [], [], []
-            for tau in sorted(exp_by_tau.keys()):
+            for tau in sorted(exp_by_tau):
                 if exp_by_tau[tau]:
                     exp_tau.append(tau)
                     exp_mean.append(np.mean(exp_by_tau[tau]))
                     exp_n.append(len(exp_by_tau[tau]))
-            per_experiment[experimentID] = {
+            per_experiment[eid] = {
                 "tau": np.array(exp_tau),
                 "delta_r_mean": np.array(exp_mean),
                 "N_pairs": np.array(exp_n),
             }
 
-        # aggregate
         tau_values, mean_values, std_values, sem_values, n_pairs_values = (
             [], [], [], [], [],
         )
-        for tau in sorted(delta_r_by_tau.keys()):
+        for tau in sorted(delta_r_by_tau):
             vals = delta_r_by_tau[tau]
-            if len(vals) > 0:
+            if vals:
                 tau_values.append(tau)
                 mean_values.append(np.mean(vals))
                 std_values.append(np.std(vals))
@@ -381,6 +545,7 @@ def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_ti
             "delta_r_std": np.array(std_values),
             "delta_r_sem": np.array(sem_values),
             "N_pairs": np.array(n_pairs_values),
+            "per_experiment": per_experiment,
         }
 
         print(
@@ -423,7 +588,7 @@ def _unit(v):
 
 
 def compute_velocity_alignment_curves(
-    graphs_dict, key_file, observation_time, use_unnormalized=False
+    graphs_dict, key_file, observation_time, use_unnormalized=False, n_jobs=None
 ):
     """Compute neighbor velocity alignment C_align(τ) for each condition.
 
@@ -437,93 +602,65 @@ def compute_velocity_alignment_curves(
     use_unnormalized : bool
         If ``True``, use raw dot-products (speed matters).
         If ``False`` (default), use unit-vector dot-products (pure alignment).
+    n_jobs : int or None
+        Worker processes. ``None`` uses all CPU cores.
 
     Returns
     -------
     alignment_curves : dict
-        ``{condition: {'tau', 'C_mean', 'C_std', 'C_sem', 'N_pairs'}}``
+        ``{condition: {'tau', 'C_mean', 'C_std', 'C_sem', 'N_pairs', 'per_experiment'}}``
     """
     start_frame, end_frame = observation_time
     max_tau = end_frame - start_frame - 2  # need one extra frame for v
 
+    tasks, seen = [], set()
+    for _, row in key_file.iterrows():
+        eid = row["experimentID"]
+        if eid in seen or eid not in graphs_dict:
+            continue
+        seen.add(eid)
+        tasks.append((eid, graphs_dict[eid], max_tau, use_unnormalized))
+
+    print(
+        f"\nComputing velocity alignment for {len(tasks)} experiments "
+        f"(n_jobs={n_jobs or os.cpu_count()}) …"
+    )
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        raw = list(pool.map(_alignment_worker, tasks))
+
+    exp_data = {eid: by_tau for eid, by_tau in raw}
+
     alignment_curves = {}
-
     for condition in key_file["condition"].unique():
-        print(f"\nComputing velocity alignment for condition: {condition}")
-
-        experiments = key_file[key_file["condition"] == condition]
+        print(f"\nAggregating condition: {condition}")
         dot_by_tau = {tau: [] for tau in range(0, max_tau + 1)}
         per_experiment = {}
 
-        for _, row in experiments.iterrows():
-            experimentID = row["experimentID"]
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} – no graphs")
+        for _, row in key_file[key_file["condition"] == condition].iterrows():
+            eid = row["experimentID"]
+            if eid not in exp_data:
+                print(f"  Skipping {eid} – no graphs")
                 continue
-
-            t_graphs = graphs_dict[experimentID]
-            exp_by_tau = {tau: [] for tau in range(0, max_tau + 1)}
-
-            # pre-compute velocities
-            vel_cache = {}
-            for t_idx in range(len(t_graphs) - 1):
-                G = t_graphs[t_idx]
-                for nid in G.nodes():
-                    vel_cache[(nid, t_idx)] = _node_velocity(t_graphs, nid, t_idx)
-
-            for t0_idx in range(len(t_graphs) - 1):
-                G_t0 = t_graphs[t0_idx]
-
-                for i, j in G_t0.edges():   # loop over all edges
-                    vi = vel_cache.get((i, t0_idx))  # get the velocity in time forward from cache
-                    if vi is None:
-                        continue
-
-                    if not use_unnormalized:
-                        vi_use = _unit(vi)
-                        if vi_use is None:
-                            continue
-                    else:
-                        vi_use = vi
-
-                    for tau in range(0, max_tau + 1):  # loop over time
-                        tj_idx = t0_idx + tau
-                        if tj_idx >= len(t_graphs) - 1:  # exit condition time > graph time points
-                            break
-
-                        vj = vel_cache.get((j, tj_idx))  # get velocity in time forward from cache
-                        if vj is None:
-                            continue
-
-                        if not use_unnormalized:
-                            vj_use = _unit(vj)
-                            if vj_use is None:
-                                continue
-                        else:
-                            vj_use = vj
-
-                        # correlation between neighbors, does not account for
-                        # relative motion, or staying spatially together
-                        dot_by_tau[tau].append(np.dot(vi_use, vj_use))
-                        exp_by_tau[tau].append(np.dot(vi_use, vj_use))
+            exp_by_tau = exp_data[eid]
+            for tau, vals in exp_by_tau.items():
+                dot_by_tau[tau].extend(vals)
 
             exp_tau, exp_mean, exp_n = [], [], []
-            for tau in sorted(exp_by_tau.keys()):
+            for tau in sorted(exp_by_tau):
                 if exp_by_tau[tau]:
                     exp_tau.append(tau)
                     exp_mean.append(np.mean(exp_by_tau[tau]))
                     exp_n.append(len(exp_by_tau[tau]))
-            per_experiment[experimentID] = {
+            per_experiment[eid] = {
                 "tau": np.array(exp_tau),
                 "C_mean": np.array(exp_mean),
                 "N_pairs": np.array(exp_n),
             }
 
-        # aggregate
         tau_vals, mean_vals, std_vals, sem_vals, n_vals = [], [], [], [], []
-        for tau in sorted(dot_by_tau.keys()):
+        for tau in sorted(dot_by_tau):
             vals = dot_by_tau[tau]
-            if len(vals) > 0:
+            if vals:
                 tau_vals.append(tau)
                 mean_vals.append(np.mean(vals))
                 std_vals.append(np.std(vals))
@@ -553,116 +690,75 @@ def compute_velocity_alignment_curves(
 # Anisotropic pairwise separation & self-MSD
 # ---------------------------------------------------------------------------
 
-def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_time):
+def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_time, n_jobs=None):
     """Compute flow-decomposed pairwise separation and single-cell MSD.
+
+    Parameters
+    ----------
+    n_jobs : int or None
+        Worker processes. ``None`` uses all CPU cores.
 
     Returns
     -------
     pair_sep : dict
-        ``{condition: {'tau', 'dx2_mean', …, 'dy2_mean', …, 'N_pairs'}}``
+        ``{condition: {'tau', 'dx2_mean', …, 'dy2_mean', …, 'N_pairs', 'per_experiment'}}``
     msd_aniso : dict
-        ``{condition: {'tau', 'msd_par_mean', …, 'msd_perp_mean', …, 'N_cells'}}``
+        ``{condition: {'tau', 'msd_par_mean', …, 'msd_perp_mean', …, 'N_cells', 'per_experiment'}}``
     """
     start_frame, end_frame = observation_time
     max_tau = end_frame - start_frame - 1
+
+    tasks, seen = [], set()
+    for _, row in key_file.iterrows():
+        eid = row["experimentID"]
+        if eid in seen or eid not in graphs_dict:
+            continue
+        seen.add(eid)
+        tasks.append((eid, graphs_dict[eid], max_tau))
+
+    print(
+        f"\nComputing anisotropic metrics for {len(tasks)} experiments "
+        f"(n_jobs={n_jobs or os.cpu_count()}) …"
+    )
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        raw = list(pool.map(_anisotropic_worker, tasks))
+
+    exp_data = {eid: (dx2, dy2, mp, mr) for eid, dx2, dy2, mp, mr in raw}
 
     pair_sep = {}
     msd_aniso = {}
 
     for condition in key_file["condition"].unique():
-        print(f"\nComputing anisotropic metrics for condition: {condition}")
+        print(f"\nAggregating condition: {condition}")
 
-        experiments = key_file[key_file["condition"] == condition]
-
-        dx2_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-        dy2_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
-        msd_par_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
+        dx2_by_tau  = {tau: [] for tau in range(1, max_tau + 1)}
+        dy2_by_tau  = {tau: [] for tau in range(1, max_tau + 1)}
+        msd_par_by_tau  = {tau: [] for tau in range(1, max_tau + 1)}
         msd_perp_by_tau = {tau: [] for tau in range(1, max_tau + 1)}
         per_experiment_pair = {}
-        per_experiment_msd = {}
+        per_experiment_msd  = {}
 
-        for _, row in experiments.iterrows():
-            experimentID = row["experimentID"]
-            if experimentID not in graphs_dict:
-                print(f"  Skipping {experimentID} – no graphs")
+        for _, row in key_file[key_file["condition"] == condition].iterrows():
+            eid = row["experimentID"]
+            if eid not in exp_data:
+                print(f"  Skipping {eid} – no graphs")
                 continue
+            exp_dx2, exp_dy2, exp_mp, exp_mr = exp_data[eid]
 
-            t_graphs = graphs_dict[experimentID]
+            for tau in exp_dx2:
+                dx2_by_tau[tau].extend(exp_dx2[tau])
+                dy2_by_tau[tau].extend(exp_dy2[tau])
+                msd_par_by_tau[tau].extend(exp_mp[tau])
+                msd_perp_by_tau[tau].extend(exp_mr[tau])
 
-            exp_dx2 = {tau: [] for tau in range(1, max_tau + 1)}
-            exp_dy2 = {tau: [] for tau in range(1, max_tau + 1)}
-            exp_mp = {tau: [] for tau in range(1, max_tau + 1)}
-            exp_mr = {tau: [] for tau in range(1, max_tau + 1)}
-
-            # --- Pair separation components ---
-            for t0_idx in range(len(t_graphs) - 1):
-                G_t0 = t_graphs[t0_idx]
-
-                for i, j in G_t0.edges():
-                    xi_t0 = G_t0.nodes[i]["x"]
-                    yi_t0 = G_t0.nodes[i]["y"]
-                    xj_t0 = G_t0.nodes[j]["x"]
-                    yj_t0 = G_t0.nodes[j]["y"]
-
-                    sep_x_t0 = xi_t0 - xj_t0  # How far apart are I and J in the x
-                    sep_y_t0 = yi_t0 - yj_t0  # How far apart are I and J in the y
-
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
-                            break
-                        G_t = t_graphs[t_idx]
-
-                        if i not in G_t.nodes() or j not in G_t.nodes():
-                            continue
-
-                        xi_t = G_t.nodes[i]["x"]
-                        yi_t = G_t.nodes[i]["y"]
-                        xj_t = G_t.nodes[j]["x"]
-                        yj_t = G_t.nodes[j]["y"]
-
-                        dx = (xi_t - xj_t) - sep_x_t0  # relative separation over time
-                        dy = (yi_t - yj_t) - sep_y_t0  # relative separation over time
-
-                        dx2_by_tau[tau].append(dx ** 2)  # Mean squared displacement
-                        dy2_by_tau[tau].append(dy ** 2)  # Mean squared displacement
-                        exp_dx2[tau].append(dx ** 2)
-                        exp_dy2[tau].append(dy ** 2)
-
-            # --- Self-MSD components ---
-            for t0_idx in range(len(t_graphs)):
-                G_t0 = t_graphs[t0_idx]
-
-                for nid in G_t0.nodes():
-                    x0 = G_t0.nodes[nid]["x"]
-                    y0 = G_t0.nodes[nid]["y"]
-
-                    for tau in range(1, max_tau + 1):
-                        t_idx = t0_idx + tau
-                        if t_idx >= len(t_graphs):
-                            break
-                        G_t = t_graphs[t_idx]
-
-                        if nid not in G_t.nodes():
-                            continue
-
-                        dx_self = G_t.nodes[nid]["x"] - x0
-                        dy_self = G_t.nodes[nid]["y"] - y0
-
-                        msd_par_by_tau[tau].append(dx_self ** 2)
-                        msd_perp_by_tau[tau].append(dy_self ** 2)
-                        exp_mp[tau].append(dx_self ** 2)
-                        exp_mr[tau].append(dy_self ** 2)
-
-            # per-experiment aggregates
             p_tau, p_dx2, p_dy2, p_n = [], [], [], []
-            for tau in sorted(exp_dx2.keys()):
+            for tau in sorted(exp_dx2):
                 if exp_dx2[tau]:
                     p_tau.append(tau)
                     p_dx2.append(np.mean(exp_dx2[tau]))
                     p_dy2.append(np.mean(exp_dy2[tau]))
                     p_n.append(len(exp_dx2[tau]))
-            per_experiment_pair[experimentID] = {
+            per_experiment_pair[eid] = {
                 "tau": np.array(p_tau),
                 "dx2_mean": np.array(p_dx2),
                 "dy2_mean": np.array(p_dy2),
@@ -670,13 +766,13 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
             }
 
             m_tau, m_mp, m_mr, m_n = [], [], [], []
-            for tau in sorted(exp_mp.keys()):
+            for tau in sorted(exp_mp):
                 if exp_mp[tau]:
                     m_tau.append(tau)
                     m_mp.append(np.mean(exp_mp[tau]))
                     m_mr.append(np.mean(exp_mr[tau]))
                     m_n.append(len(exp_mp[tau]))
-            per_experiment_msd[experimentID] = {
+            per_experiment_msd[eid] = {
                 "tau": np.array(m_tau),
                 "msd_par_mean": np.array(m_mp),
                 "msd_perp_mean": np.array(m_mr),
@@ -687,10 +783,10 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
         tau_vals_p, dx2_m, dx2_s, dx2_se, dy2_m, dy2_s, dy2_se, n_pairs = (
             [], [], [], [], [], [], [], [],
         )
-        for tau in sorted(dx2_by_tau.keys()):
+        for tau in sorted(dx2_by_tau):
             vx = dx2_by_tau[tau]
             vy = dy2_by_tau[tau]
-            if len(vx) > 0:
+            if vx:
                 tau_vals_p.append(tau)
                 dx2_m.append(np.mean(vx))
                 dx2_s.append(np.std(vx))
@@ -716,10 +812,10 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
         tau_vals_m, mp_m, mp_s, mp_se, mr_m, mr_s, mr_se, n_cells = (
             [], [], [], [], [], [], [], [],
         )
-        for tau in sorted(msd_par_by_tau.keys()):
+        for tau in sorted(msd_par_by_tau):
             vp = msd_par_by_tau[tau]
             vr = msd_perp_by_tau[tau]
-            if len(vp) > 0:
+            if vp:
                 tau_vals_m.append(tau)
                 mp_m.append(np.mean(vp))
                 mp_s.append(np.std(vp))
