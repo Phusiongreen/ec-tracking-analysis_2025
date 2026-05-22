@@ -29,9 +29,7 @@ from src.plot import resolve_interval
 
 # read parameters and key file
 
-#parameter_file  = "/media/jpa/Volume/MDC/MDC_data/ec_tracking/trial/parameters_test_set.yml" #(Jan's path, just adding mine down)
 parameter_file = "/home/jpa/PycharmProjects/ec-tracking-analysis_2025/data/collectivity/parameters_collectivity.yml"
-#parameter_file = "../data/parameters_combined.yml"
 
 parameters = read_parameters(parameter_file)       
 
@@ -44,12 +42,6 @@ print("key file conditions:", key_file["condition"].unique())
 
 # In[24]:
 
-# parameter_file  = "../local/parameters.yml"
-# parameters = read_parameters(parameter_file)   
-
-# base_folder = parameters["base_folder"]
-# tracking_data_files = parameters["tracking_data"]
-# data_exclude = parameters["data_exclude"]
 output_folder = Path(parameters["output_folder"])
 subfolder = "collective_migration_plots"
 if not os.path.exists(output_folder.joinpath(subfolder)):
@@ -57,7 +49,6 @@ if not os.path.exists(output_folder.joinpath(subfolder)):
 
 tracking_data_path = output_folder.joinpath("speed_data")
 
-# single_time_point_evaluation = parameters["single_time_point_evaluation"]
 
 interval = parameters["time_lag"]
 
@@ -175,16 +166,7 @@ color= "black" #selects for this "color" items in keyfile only
 key_selection = key_file[key_file["color"] == color] #selects for this "color" items in keyfile only
 print(key_selection) 
 
-#key_selection = key_selection[key_selection["experimentID"] != "WT_100k_15dynrampup_flow_22h"]
-#display(key_selection) 
 
-
-# In[9]:
-
-parameters
-
-
-# In[ ]:
 
 # # create data
 
@@ -197,8 +179,6 @@ if not os.path.exists(output_folder.joinpath("speed_data")):
 compute_speeds(parameters, key_file)
 
 
-# In[ ]:
-
 # Generate direction autocorrelation data(optional, use only for sets to conduct further directionality analysis)
 
 
@@ -206,8 +186,6 @@ compute_speeds(parameters, key_file)
 
 compute_direction_autocorrelation(parameters, key_file)
 
-
-# In[ ]:
 
 # create subset data for cells going against or with flow prior to drug addition (as well as going slowly in either direction)
 
@@ -309,8 +287,6 @@ print(f"Source files processed: {total_sources_processed}")
 print(f"Subset files written: {total_written}")
 print(f"Subset files skipped (already existed): {total_skipped_existing}")
 
-
-# In[ ]:
 
 # # load data
 
@@ -425,7 +401,6 @@ else:
 
 
 #migration_speed_df = migration_speed_df[migration_speed_df["time_lag"] == interval]
-migration_speed_df
 
 
 # In[9]:
@@ -492,8 +467,6 @@ else:
     print(f"  100-200 time points: {((final_track_lengths >= 100) & (final_track_lengths <= 200)).sum()} tracks")
     print(f"  200+ time points: {(final_track_lengths > 200).sum()} tracks")
 
-
-# In[ ]:
 
 # (Optional, currently not useful as it takes too long and uses too much memory) - Exports dataframe and enables user to load preivously exported dataframe rather than loading it each time
 
@@ -582,15 +555,10 @@ else:
         )
 
 
-# In[ ]:
-
 # Cell to enable which treatments to generate plots for and to give them specific colors
 
 
 # In[43]:
-
-
-
 def _shade(hex_color, amount=1.0):
     rgb = np.array(mcolors.to_rgb(hex_color))
     return mcolors.to_hex(np.clip(rgb * amount, 0, 1))
@@ -662,8 +630,6 @@ for parent in ["VEGF+DMSO-Flow", "VEGF+Ramucirumab-Flow", "VEGF+PND1186-Flow"]:
 for t in treatment_order:
     print(t, color_palette.get(t))
 
-
-# In[ ]:
 
 # # velocity against flow grouped by treatment and filename
 
@@ -809,8 +775,6 @@ plt.savefig(output_folder / subfolder / "v_parallel_to_flow_ind_VEGF_perturb_pre
 #           especially for producing combinations with different treatments, or parameters during refactor/troublehshoot/final fig protoytyping 
 
 
-# In[ ]:
-
 #
 #  velocity against flow grouped by treatment and filename - ALTERNATIVE, old version. Adds way too many filenames on legend
 
@@ -861,12 +825,8 @@ plt.tight_layout()  # auto-adjust layout so labels and legend fit within the fig
 #           especially for producing combinations with different treatments, or parameters during refactor/troublehshoot/final fig protoytyping 
 
 
-# In[ ]:
-
 # # velocity against flow grouped by treatment 
 
-
-# In[ ]:
 
 # Alternative, old version. Slower, different legend
 
@@ -923,8 +883,6 @@ plt.tight_layout()  # auto-adjust layout so labels and legend fit within the fig
 #            plt.savefig(output_folder / subfolder / f'trajectories_{condition}_{row["experimentID"]}.png') , template to help brainstorm on how to improve plot nomenclature 
 #           especially for producing combinations with different treatments, or parameters during refactor/troublehshoot/final fig protoytyping 
 
-
-# In[ ]:
 
 # New version, bit faster, different legend style
 
@@ -1002,12 +960,8 @@ plt.savefig(output_folder / subfolder / "v_parallel_to_flow_grouped_sictrl+sikan
 #           especially for producing combinations with different treatments, or parameters during refactor/troublehshoot/final fig protoytyping 
 
 
-# In[ ]:
-
 # Total Velocity
 
-
-# In[ ]:
 
 # Total Velocity (all individual experiments, rolling 1-hour window)
 
@@ -1068,8 +1022,6 @@ plt.savefig(output_folder / subfolder / "tot_speed_1h_individual_exps_sictrl+sik
 plt.savefig(output_folder / subfolder / "tot_speed_1h_individual_exps_sictrl+sikank1_lowvegf+highvegf_flow_20h.png")
 
 
-# In[ ]:
-
 # Total Velocity (ALTERNATIVE- different legend, Grouped experiments, rolling 1-hour window)
 
 
@@ -1116,8 +1068,6 @@ plt.savefig(output_folder / subfolder / "total_velocity_grouped_timelag_4_with_v
 #plt.savefig("velocity_%s.pdf" % condition)
 #plt.savefig("velocity_%s.png" % condition)
 
-
-# In[ ]:
 
 # Total Velocity (Grouped trend of experiments, rolling 1-hour window)
 
@@ -1190,8 +1140,6 @@ plt.savefig(output_folder / subfolder / "tot_speed_1h_grouped_sictrl+sikank1_low
 plt.savefig(output_folder / subfolder / "tot_speed_1h_grouped_sictrl+sikank1_lowvegf+highvegf_flow_20h.png")
 
 
-# In[ ]:
-
 # Directionality ratio 𝑑/𝐷 (Old version, different legend and too many filenames in legend, cumulative,individual experiments)
 
 
@@ -1224,8 +1172,6 @@ plt.tight_layout()
 plt.savefig(output_folder / subfolder / f"dir_ratio_individual_exps_timelag_{interval}.pdf")
 plt.savefig(output_folder / subfolder / f"dir_ratio_individual_exps_timelag_{interval}.png")
 
-
-# In[ ]:
 
 # Directionality ratio 𝑑/𝐷 (New version, cumulative, individual experiments)
 
@@ -1301,8 +1247,6 @@ plt.savefig(output_folder / subfolder / "dir_ratio_individual_exps_sictrl+sikank
 plt.savefig(output_folder / subfolder / "dir_ratio_individual_exps_sictrl+sikank1_lowvegf+highvegf_flow_20h.png")
 
 
-# In[ ]:
-
 # Directionality ratio 𝑑/𝐷 (New version, cumulative, pooled experiments)
 
 
@@ -1369,8 +1313,6 @@ plt.savefig(output_folder / subfolder / "dir_ratio_pooled_exps_sictrl+sikank1_lo
 plt.savefig(output_folder / subfolder / "dir_ratio_pooled_exps_sictrl+sikank1_lowvegf+highvegf_flow_20h.png")
 
 
-# In[ ]:
-
 # Persistence(Old version, rolling 1-hour window, individual experiments)
 
 
@@ -1403,8 +1345,6 @@ plt.tight_layout()
 plt.savefig(output_folder / subfolder / f"persistence_1h_individual_exps_timelag_{interval}.pdf")
 plt.savefig(output_folder / subfolder / f"persistence_1h_individual_exps_timelag_{interval}.png")
 
-
-# In[ ]:
 
 # Persistence (New version, rolling 1-hour window, individual experiments)
 
@@ -1481,8 +1421,6 @@ plt.savefig(output_folder / subfolder / "dir_ratio_1h_individual_exps_sictrl+sik
 plt.savefig(output_folder / subfolder / "dir_ratio_1h_individual_exps_sictrl+sikank1_lowvegf+highvegf_flow_20h.png")
 
 
-# In[ ]:
-
 # Persistence  (New version, 1-hour window, pooled experiments)
 
 
@@ -1548,8 +1486,6 @@ plt.savefig(output_folder / subfolder / "dir_ratio_1h_pooled_exps_sictrl+sikank1
 plt.savefig(output_folder / subfolder / "dir_ratio_1h_pooled_exps_sictrl+sikank1_lowvegf+highvegf_flow_20h.png")
 
 
-# In[ ]:
-
 # Direction autocorrelation (individual experiments) - Will work if optional autocorelation spreasheets are generated. As Of Oct 10 2025, not sure if it produces useful info or follows literature method (2024 nat protocols) properly
 
 
@@ -1605,12 +1541,8 @@ plot_data = single_time_point.groupby(["treatment", "filename"])["vel_x_mu_per_h
 print(plot_data)
 
 
-# In[ ]:
-
 # # Box Plots for single time points & time intervals
 
-
-# In[ ]:
 
 # Velocity Box plot for single time points (Non-granular box plot, taking average of entire experiments)
 
@@ -1654,8 +1586,6 @@ else:
     #plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     #plt.legend(loc=2, borderaxespad=0.)
 
-
-# In[ ]:
 
 # Velocity Box plot for single time points (Granular box plot, demonstrating per track values(can be toggled to take % of data and overlay as dots))
 
