@@ -89,8 +89,12 @@ migration_speed_time_xlim_h: "auto"             # x in hours, always clipped to 
 migration_speed_velocity_ylim_um_h: "auto"      # y in µm/h
 
 # flow direction splitting parameters (notebook 07)
+target_position_t: 15840.0  # POSITION_T (seconds) at which to evaluate flow direction for splitting
 with_flow_threshold: 5.0  # um/h, vel_x above this = "with flow"
 against_flow_threshold: -5.0  # um/h, vel_x below this = "against flow"
+
+subsample_n: 10 # for speed up of draft plotting
+subsample_frac: 0.1 # for speed up of draft plotting
 
 # direction autocorrelation parameters
 

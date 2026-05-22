@@ -43,6 +43,31 @@ def _build_graph_at_frame(args):
     return t, G_delaunay
 
 
+def _run_workers(worker_fn, tasks, n_jobs):
+    """Run *worker_fn* over *tasks*, in-process when n_jobs==1 (avoids fork overhead
+    and OOM kills for memory-heavy workers), parallel otherwise.
+
+    Parameters
+    ----------
+    worker_fn : callable
+        Module-level worker function (picklable).
+    tasks : list
+        List of argument tuples passed to *worker_fn*.
+    n_jobs : int or None
+        Number of worker processes.  ``1`` → sequential in-process.
+        ``None`` → ``os.cpu_count()`` parallel workers.
+
+    Returns
+    -------
+    list
+        Results in submission order.
+    """
+    if n_jobs == 1:
+        return [worker_fn(t) for t in tasks]
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        return list(pool.map(worker_fn, tasks))
+
+
 # ---------------------------------------------------------------------------
 # Graph construction
 # ---------------------------------------------------------------------------
@@ -116,8 +141,7 @@ def build_time_graphs(key_file, data_folder, observation_time, distance_threshol
             f"  Building {len(tasks)} frame graphs in parallel "
             f"(n_jobs={n_jobs or os.cpu_count()}) …"
         )
-        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
-            results = list(pool.map(_build_graph_at_frame, tasks))
+        results = _run_workers(_build_graph_at_frame, tasks, n_jobs)
 
         # results come back in submission order (map preserves order)
         t_graphs = [G for _, G in results]
@@ -168,8 +192,7 @@ def compute_neighbor_lifetimes(graphs, observation_period_dfs, key_file, n_jobs=
         f"\nComputing neighbor lifetimes for {len(tasks)} experiments "
         f"(n_jobs={n_jobs or os.cpu_count()}) …"
     )
-    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
-        results = list(pool.map(_lifetimes_worker, tasks))
+    results = _run_workers(_lifetimes_worker, tasks, n_jobs)
 
     # map experimentID → condition (first match wins)
     exp_to_condition = (
@@ -221,8 +244,7 @@ def compute_neighbor_retention_curve(graphs_dict, key_file, observation_time, n_
         f"\nComputing neighbor retention for {len(tasks)} experiments "
         f"(n_jobs={n_jobs or os.cpu_count()}) …"
     )
-    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
-        raw = list(pool.map(_retention_worker, tasks))
+    raw = _run_workers(_retention_worker, tasks, n_jobs)
 
     exp_data = {eid: by_tau for eid, by_tau in raw}
 
@@ -495,8 +517,7 @@ def compute_relative_neighbor_displacement(graphs_dict, key_file, observation_ti
         f"\nComputing cage-relative displacement for {len(tasks)} experiments "
         f"(n_jobs={n_jobs or os.cpu_count()}) …"
     )
-    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
-        raw = list(pool.map(_displacement_worker, tasks))
+    raw = _run_workers(_displacement_worker, tasks, n_jobs)
 
     exp_data = {eid: by_tau for eid, by_tau in raw}
 
@@ -625,8 +646,7 @@ def compute_velocity_alignment_curves(
         f"\nComputing velocity alignment for {len(tasks)} experiments "
         f"(n_jobs={n_jobs or os.cpu_count()}) …"
     )
-    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
-        raw = list(pool.map(_alignment_worker, tasks))
+    raw = _run_workers(_alignment_worker, tasks, n_jobs)
 
     exp_data = {eid: by_tau for eid, by_tau in raw}
 
@@ -720,8 +740,7 @@ def compute_anisotropic_separation_and_msd(graphs_dict, key_file, observation_ti
         f"\nComputing anisotropic metrics for {len(tasks)} experiments "
         f"(n_jobs={n_jobs or os.cpu_count()}) …"
     )
-    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
-        raw = list(pool.map(_anisotropic_worker, tasks))
+    raw = _run_workers(_anisotropic_worker, tasks, n_jobs)
 
     exp_data = {eid: (dx2, dy2, mp, mr) for eid, dx2, dy2, mp, mr in raw}
 

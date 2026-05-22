@@ -28,10 +28,8 @@ from src.plot import resolve_interval
 # In[23]:
 
 # read parameters and key file
-
 parameter_file = "/home/jpa/PycharmProjects/ec-tracking-analysis_2025/data/collectivity/parameters_collectivity.yml"
-
-parameters = read_parameters(parameter_file)       
+parameters = read_parameters(parameter_file)
 
 key_file_path = parameters["key_file"]
 key_file = pd.read_csv(key_file_path)
@@ -52,12 +50,12 @@ tracking_data_path = output_folder.joinpath("speed_data")
 
 interval = parameters["time_lag"]
 
-errorbar = ("ci", parameters["errorbar_ci"])
+errorbar = parameters["errorbar_ci"]
 
 plt.rcParams.update({'font.size': parameters["font_size"]})
 
-subsample_n = 10 # for speed up of draft plotting
-subsample_frac = 0.1 # for speed up of draft plotting
+subsample_n = parameters["subsample_n"]
+subsample_frac = parameters["subsample_frac"]
 
 
 # In[25]:
@@ -77,26 +75,45 @@ drug_marker_color = parameters['drug_marker_color']
 
 
 def _get_pre_flow_band_hours(pre_flow_frames: int) -> float:
-    # Prefer frame rate from key_file
-    fph_values = []
-    if 'frame_per_hour' in key_file.columns:
-        try:
-            fph_values = [float(v) for v in key_file['frame_per_hour'].dropna().unique().tolist()]
-        except Exception:
-            fph_values = []
-    # Choose the most common or first available; fallback to 10
-    try:
-        fph = mode(fph_values) if fph_values else 10.0
-    except Exception:
-        fph = fph_values[0] if fph_values else 10.0
-    if not fph or fph == 0:
-        fph = 10.0
+    """Convert pre-flow frame count to hours using the frame rate from key_file.
+
+    Reads the unique 'frame_per_hour' values from key_file and picks the mode
+    when multiple rates are present (mixed-rate experiments), or the single value
+    otherwise.  Raises if the column is absent, empty, or resolves to zero.
+    """
+    if 'frame_per_hour' not in key_file.columns:
+        raise KeyError("key_file is missing required column 'frame_per_hour'")
+    fph_values = [float(v) for v in key_file['frame_per_hour'].dropna().unique().tolist()]
+    if not fph_values:
+        raise ValueError("'frame_per_hour' column contains no valid values")
+    fph = mode(fph_values) if len(fph_values) > 1 else fph_values[0]
+    if fph == 0:
+        raise ValueError(f"'frame_per_hour' resolved to 0 — check key_file")
     return pre_flow_frames / float(fph)
 
 def _get_drug_addition_time_h(pre_flow_frames: int) -> float:
+    """Return the absolute time (h) at which drug was added.
+
+    Drug addition time = pre-flow duration + the offset stored in
+    drug_addition_after_flow_h (i.e. how many hours after flow onset the drug
+    was added).
+    """
     return _get_pre_flow_band_hours(pre_flow_frames) + float(drug_addition_after_flow_h)
 
 def draw_pre_flow_band(ax, pre_flow_frames: int):
+    """Annotate a time-series axes with experimental phase markers.
+
+    Draws, in order:
+      1. A grey shaded band from t=0 to the end of the pre-flow period.
+      2. (optional) A coloured band immediately after, spanning the flow
+         ramp-up duration (show_flow_ramp_band / flow_ramp_duration_h).
+      3. (optional) A drug-addition marker at the corresponding time,
+         rendered as a dashed vertical line, an asterisk, or both
+         (drug_marker_style).
+    All three are controlled by the module-level config variables read from
+    parameters at startup.  The x-axis lower bound is clamped to 0 if it has
+    drifted negative.
+    """
     pre_flow_h = _get_pre_flow_band_hours(pre_flow_frames)
     ax.axvspan(0, pre_flow_h, color='0.85', alpha=0.5, lw=0, zorder=0)
 
@@ -168,30 +185,21 @@ print(key_selection)
 
 
 
-# # create data
-
-
 # In[ ]:
 
 if not os.path.exists(output_folder.joinpath("speed_data")):
     os.mkdir(output_folder.joinpath("speed_data"))
-    
+
+# compute migration speeds
 compute_speeds(parameters, key_file)
 
-
 # Generate direction autocorrelation data(optional, use only for sets to conduct further directionality analysis)
-
-
-# In[ ]:
-
 compute_direction_autocorrelation(parameters, key_file)
-
-
-# create subset data for cells going against or with flow prior to drug addition (as well as going slowly in either direction)
 
 
 # In[10]:
 
+# create subset data for cells going against or with flow prior to drug addition (as well as going slowly in either direction)
 
 # Split parameters
 target_position_t = parameters["target_position_t"]
