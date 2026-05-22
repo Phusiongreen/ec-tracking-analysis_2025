@@ -1,7 +1,11 @@
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from src.graph_analysis import _unit, _node_velocity
 
 
 def prepare_tracking_data(parameters, key_file, subfolder="tracking_data"):
@@ -682,3 +686,303 @@ def normalize_speed(vel_x, min_value, max_value):
     '''
     rel_vel = (vel_x - min_value) / (max_value - min_value)
     return rel_vel
+
+
+def compute_instantaneous_neighbor_velocity_alignment(
+    graphs_dict,
+    key_file,
+    observation_time,
+    velocity_window=3,
+    use_unnormalized=False,
+    require_full_window=False,
+    n_jobs=None,
+):
+    """Compute same-time neighbor velocity alignment through the experiment.
+
+    Biological question
+    -------------------
+    "At each time point, are cells that are currently neighbors moving in
+    the same direction?"
+
+    For each frame t:
+        1. Take neighbor pairs that are neighbors at frame t.
+        2. Compute each cell's velocity direction at frame t.
+        3. Compute the dot product between the two velocity directions.
+        4. Average over all neighbor pairs.
+
+    Parameters
+    ----------
+    graphs_dict : dict
+        experimentID -> list[nx.Graph], one graph per frame.
+    key_file : pd.DataFrame
+        Must contain "experimentID" and "condition".
+    observation_time : tuple
+        (start_frame, end_frame). Used for frame labels.
+    velocity_window : int, default 3
+        Number of trailing velocity estimates to average.
+        Use velocity_window=1 for the strict current-frame velocity.
+        Use velocity_window=3 for a smoother short-history velocity estimate.
+    use_unnormalized : bool, default False
+        If False, use unit-vector dot products, measuring direction only.
+        If True, use raw velocity dot products, mixing speed and direction.
+    require_full_window : bool, default False
+        If True, require all velocity_window estimates to exist.
+        If False, use available valid velocity estimates.
+    n_jobs : int or None
+        Worker processes. None uses all CPU cores.
+
+    Returns
+    -------
+    alignment_timecourses : dict
+        {
+            condition: {
+                "frame": np.array,
+                "C_mean": np.array,
+                "C_std": np.array,
+                "C_sem": np.array,
+                "N_pairs": np.array,
+                "per_experiment": {
+                    experimentID: {
+                        "frame": np.array,
+                        "C_mean": np.array,
+                        "N_pairs": np.array,
+                    }
+                },
+            }
+        }
+
+    Interpretation
+    --------------
+    For normalized dot products:
+        +1 means current neighbors move in the same direction.
+         0 means no directional relation.
+        -1 means current neighbors move in opposite directions.
+    """
+    start_frame, _ = observation_time
+
+    tasks, seen = [], set()
+    for _, row in key_file.iterrows():
+        eid = row["experimentID"]
+        if eid in seen or eid not in graphs_dict:
+            continue
+        seen.add(eid)
+        tasks.append(
+            (
+                eid,
+                graphs_dict[eid],
+                start_frame,
+                velocity_window,
+                use_unnormalized,
+                require_full_window,
+            )
+        )
+
+    print(
+        f"\nComputing instantaneous neighbor velocity alignment for "
+        f"{len(tasks)} experiments "
+        f"(velocity_window={velocity_window}, "
+        f"n_jobs={n_jobs or os.cpu_count()}) ..."
+    )
+
+    if len(tasks) == 0:
+        return {}
+
+    with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+        raw = list(pool.map(_instantaneous_neighbor_alignment_worker, tasks))
+
+    exp_data = {eid: by_frame for eid, by_frame in raw}
+
+    alignment_timecourses = {}
+
+    for condition in key_file["condition"].unique():
+        print(f"\nAggregating condition: {condition}")
+
+        frame_to_values = {}
+        per_experiment = {}
+
+        for _, row in key_file[key_file["condition"] == condition].iterrows():
+            eid = row["experimentID"]
+            if eid not in exp_data:
+                print(f"  Skipping {eid} - no graphs")
+                continue
+
+            exp_by_frame = exp_data[eid]
+
+            exp_frames, exp_means, exp_n = [], [], []
+            for frame in sorted(exp_by_frame):
+                vals = exp_by_frame[frame]
+                if not vals:
+                    continue
+
+                frame_to_values.setdefault(frame, []).extend(vals)
+                exp_frames.append(frame)
+                exp_means.append(np.mean(vals))
+                exp_n.append(len(vals))
+
+            per_experiment[eid] = {
+                "frame": np.array(exp_frames),
+                "C_mean": np.array(exp_means),
+                "N_pairs": np.array(exp_n),
+            }
+
+        frames, means, stds, sems, n_pairs = [], [], [], [], []
+        for frame in sorted(frame_to_values):
+            vals = frame_to_values[frame]
+            if not vals:
+                continue
+            frames.append(frame)
+            means.append(np.mean(vals))
+            stds.append(np.std(vals))
+            sems.append(np.std(vals) / np.sqrt(len(vals)))
+            n_pairs.append(len(vals))
+
+        alignment_timecourses[condition] = {
+            "frame": np.array(frames),
+            "C_mean": np.array(means),
+            "C_std": np.array(stds),
+            "C_sem": np.array(sems),
+            "N_pairs": np.array(n_pairs),
+            "per_experiment": per_experiment,
+        }
+
+        if len(frames):
+            print(
+                f"  {len(frames)} frames, "
+                f"avg {np.mean(n_pairs):.0f} neighbor pairs per frame"
+            )
+
+    return alignment_timecourses
+
+
+def _instantaneous_neighbor_alignment_worker(args):
+    """Compute same-frame neighbor velocity alignment for one experiment.
+
+    Parameters
+    ----------
+    args : tuple
+        (
+            experimentID,
+            t_graphs,
+            start_frame,
+            velocity_window,
+            use_unnormalized,
+            require_full_window,
+        )
+
+    Returns
+    -------
+    tuple
+        (experimentID, {frame: [dot_product_values]})
+    """
+    (
+        experimentID,
+        t_graphs,
+        start_frame,
+        velocity_window,
+        use_unnormalized,
+        require_full_window,
+    ) = args
+
+    # Need t + 1 to compute v(t), so the last graph cannot be used as a
+    # velocity-start frame.
+    exp_by_frame = {
+        start_frame + t_idx: []
+        for t_idx in range(max(0, len(t_graphs) - 1))
+    }
+
+    for t_idx in range(len(t_graphs) - 1):
+        G_t = t_graphs[t_idx]
+        frame_label = start_frame + t_idx
+
+        for i, j in G_t.edges():
+            vi = _mean_node_velocity_over_window(
+                t_graphs,
+                i,
+                t_idx,
+                velocity_window=velocity_window,
+                require_full_window=require_full_window,
+            )
+            vj = _mean_node_velocity_over_window(
+                t_graphs,
+                j,
+                t_idx,
+                velocity_window=velocity_window,
+                require_full_window=require_full_window,
+            )
+
+            if vi is None or vj is None:
+                continue
+
+            vi_use = vi if use_unnormalized else _unit(vi)
+            vj_use = vj if use_unnormalized else _unit(vj)
+
+            if vi_use is None or vj_use is None:
+                continue
+
+            exp_by_frame[frame_label].append(np.dot(vi_use, vj_use))
+
+    return experimentID, exp_by_frame
+
+
+def _mean_node_velocity_over_window(
+    graphs_list,
+    node_id,
+    t_idx,
+    velocity_window=1,
+    require_full_window=False,
+):
+    """Return mean velocity vector for node_id using a trailing window.
+
+    The codebase convention is:
+        v(t) = r(t + 1) - r(t)
+
+    For velocity_window = 1:
+        use only v(t_idx)
+
+    For velocity_window = 3:
+        average v(t_idx - 2), v(t_idx - 1), v(t_idx), when available.
+
+    Parameters
+    ----------
+    graphs_list : list[nx.Graph]
+        One graph per frame.
+    node_id : hashable
+        TRACK_ID / node identifier.
+    t_idx : int
+        Frame index within graphs_list.
+    velocity_window : int
+        Number of velocity estimates to average.
+    require_full_window : bool
+        If True, require all velocity_window estimates to exist.
+        If False, use whatever valid preceding velocities are available.
+
+    Returns
+    -------
+    np.ndarray or None
+        Mean velocity vector [vx, vy], or None if unavailable.
+    """
+    if velocity_window < 1:
+        raise ValueError("velocity_window must be >= 1")
+
+    start_idx = max(0, t_idx - velocity_window + 1)
+    requested_start_idx = t_idx - velocity_window + 1
+
+    if require_full_window and requested_start_idx < 0:
+        return None
+
+    velocities = []
+    for k in range(start_idx, t_idx + 1):
+        v = _node_velocity(graphs_list, node_id, k)
+        if v is None:
+            if require_full_window:
+                return None
+            continue
+        velocities.append(v)
+
+    if len(velocities) == 0:
+        return None
+
+    if require_full_window and len(velocities) < velocity_window:
+        return None
+
+    return np.mean(velocities, axis=0)

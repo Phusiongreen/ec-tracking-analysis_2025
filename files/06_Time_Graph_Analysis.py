@@ -14,6 +14,7 @@ import pandas as pd
 
 sys.path.append("../")
 from src.io import read_parameters
+from src.computation import compute_instantaneous_neighbor_velocity_alignment
 from src.graph_analysis import (
     build_time_graphs,
     compute_neighbor_lifetimes,
@@ -350,6 +351,134 @@ else:
     print("Skipping neighbor lifetimes (run_neighbor_lifetimes=False)")
 
 
+# In[10]:
+
+# ---------------------------------------------------------------------------
+# Instantaneous neighbor velocity alignment over time
+# ---------------------------------------------------------------------------
+
+if run_velocity_alignment:
+    instantaneous_alignment_norm = compute_instantaneous_neighbor_velocity_alignment(
+        graphs, key_file, observation_time,
+        velocity_window=3, use_unnormalized=False, n_jobs=n_jobs
+    )
+
+    instantaneous_alignment_unnorm = compute_instantaneous_neighbor_velocity_alignment(
+        graphs, key_file, observation_time,
+        velocity_window=3, use_unnormalized=True, n_jobs=n_jobs
+    )
+else:
+    print("Skipping instantaneous velocity alignment (run_velocity_alignment=False)")
+
+
+# In[10b]:
+
+if run_velocity_alignment:
+    # Helper: cross-replicate stats for frame-indexed per_experiment dicts
+    def _cross_replicate_stats_frame(per_experiment):
+        all_frames = set()
+        for ed in per_experiment.values():
+            all_frames.update(ed["frame"].tolist())
+        frames_sorted = np.array(sorted(all_frames))
+        means, sems, ns = [], [], []
+        out_frames = []
+        for f in frames_sorted:
+            vals = [ed["C_mean"][np.where(ed["frame"] == f)[0][0]]
+                    for ed in per_experiment.values()
+                    if len(np.where(ed["frame"] == f)[0]) == 1]
+            if vals:
+                out_frames.append(f)
+                vals = np.asarray(vals, dtype=float)
+                means.append(np.mean(vals))
+                sems.append(np.std(vals, ddof=1) / np.sqrt(len(vals)) if len(vals) > 1 else 0.0)
+                ns.append(len(vals))
+        return {
+            "frame": np.array(out_frames),
+            "mean": np.array(means),
+            "sem": np.array(sems),
+            "n_experiments": np.array(ns),
+        }
+
+    # Plot 1: Normalized — all conditions overlaid
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for condition in key_file["condition"].unique():
+        cd = instantaneous_alignment_norm[condition]
+        cx = _cross_replicate_stats_frame(cd["per_experiment"])
+        if len(cx["frame"]) == 0:
+            continue
+        line, = ax.plot(cx["frame"], cx["mean"], linewidth=2,
+                        label=f"{condition}  (n={int(np.max(cx['n_experiments']))} exp)")
+        if np.any(cx["sem"] > 0):
+            ax.fill_between(cx["frame"], cx["mean"] - cx["sem"], cx["mean"] + cx["sem"],
+                            alpha=0.25, color=line.get_color(), linewidth=0)
+    ax.axhline(0, color="grey", linewidth=0.8, linestyle="--")
+    ax.set_xlabel("Frame", fontsize=12, fontweight="bold")
+    ax.set_ylabel(r"$C_{\mathrm{align}}(t)$  (unit-vector dot product) — replicate mean ± SEM",
+                  fontsize=12, fontweight="bold")
+    ax.set_title("Instantaneous Neighbor Velocity Alignment – Normalized",
+                 fontsize=13, fontweight="bold")
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    plt.tight_layout()
+    plt.savefig(output_folder / subfolder / "instantaneous_velocity_alignment_normalized.pdf")
+    plt.savefig(output_folder / subfolder / "instantaneous_velocity_alignment_normalized.png")
+    plt.show()
+
+    # Plot 2: Unnormalized (speed-weighted) — all conditions overlaid
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for condition in key_file["condition"].unique():
+        cd = instantaneous_alignment_unnorm[condition]
+        cx = _cross_replicate_stats_frame(cd["per_experiment"])
+        if len(cx["frame"]) == 0:
+            continue
+        line, = ax.plot(cx["frame"], cx["mean"], linewidth=2,
+                        label=f"{condition}  (n={int(np.max(cx['n_experiments']))} exp)")
+        if np.any(cx["sem"] > 0):
+            ax.fill_between(cx["frame"], cx["mean"] - cx["sem"], cx["mean"] + cx["sem"],
+                            alpha=0.25, color=line.get_color(), linewidth=0)
+    ax.axhline(0, color="grey", linewidth=0.8, linestyle="--")
+    ax.set_xlabel("Frame", fontsize=12, fontweight="bold")
+    ax.set_ylabel(r"$\langle \mathbf{v}_i(t) \cdot \mathbf{v}_j(t) \rangle$  (µm²/frame²) — replicate mean ± SEM",
+                  fontsize=12, fontweight="bold")
+    ax.set_title("Instantaneous Neighbor Velocity Alignment – Unnormalized (speed-weighted)",
+                 fontsize=13, fontweight="bold")
+    ax.legend(fontsize=10)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    plt.tight_layout()
+    plt.savefig(output_folder / subfolder / "instantaneous_velocity_alignment_unnormalized.pdf")
+    plt.savefig(output_folder / subfolder / "instantaneous_velocity_alignment_unnormalized.png")
+    plt.show()
+
+    # Plot 3: Per-condition subplots with N_pairs overlay (normalized)
+    conditions = list(key_file["condition"].unique())
+    n_cond = len(conditions)
+    fig, axes = plt.subplots(1, n_cond, figsize=(6 * n_cond, 5), sharey=True)
+    if n_cond == 1:
+        axes = [axes]
+    for ax, condition in zip(axes, conditions):
+        cd = instantaneous_alignment_norm[condition]
+        cx = _cross_replicate_stats_frame(cd["per_experiment"])
+        if len(cx["frame"]) == 0:
+            ax.set_visible(False)
+            continue
+        color = "darkorange"
+        ax.plot(cx["frame"], cx["mean"], color=color, linewidth=2)
+        if np.any(cx["sem"] > 0):
+            ax.fill_between(cx["frame"], cx["mean"] - cx["sem"], cx["mean"] + cx["sem"],
+                            alpha=0.25, color=color, linewidth=0)
+        ax.axhline(0, color="grey", linewidth=0.8, linestyle="--")
+        ax2 = ax.twinx()
+        ax2.bar(cd["frame"], cd["N_pairs"], color="grey", alpha=0.18, width=1.0)
+        ax2.set_ylabel("N pairs", fontsize=9, color="grey")
+        ax2.tick_params(axis="y", labelcolor="grey", labelsize=8)
+        ax.set_xlabel("Frame", fontsize=11, fontweight="bold")
+        ax.set_ylabel(r"$C_{\mathrm{align}}(t)$", fontsize=11, fontweight="bold")
+        ax.set_title(f"Condition: {condition}", fontsize=12, fontweight="bold")
+        ax.grid(True, alpha=0.3, linestyle="--")
+    plt.tight_layout()
+    plt.savefig(output_folder / subfolder / "instantaneous_velocity_alignment_per_condition.pdf")
+    plt.savefig(output_folder / subfolder / "instantaneous_velocity_alignment_per_condition.png")
+    plt.show()
 
 
 # In[11]:
