@@ -66,6 +66,15 @@ distance_threshold: 50  # um, Delaunay graph edge distance threshold
 num_subsample: 5  # number of tracks to sample for diagnostic histograms
 n_jobs: null  # number of parallel worker processes for graph construction (null = use all CPU cores)
 
+# Toggle individual time-graph analysis modules (06_Time_Graph_Analysis).
+# Set to false to skip a module and save computation time.
+run_node_trajectory_viz: true        # 3-D node trajectory visualisation
+run_neighbor_lifetimes: true         # neighbor lifetime histograms
+run_neighbor_retention: true         # neighbor retention / survival curves
+run_cage_relative_displacement: true # cage-relative neighbor displacement ⟨δr(τ)⟩
+run_velocity_alignment: true         # neighbor velocity alignment C_align(τ)
+run_anisotropic_msd: true            # flow-decomposed pairwise separation & self-MSD
+
 # parameters for velocity computation
 
 time_lag: 4 # interval for velocity computation in frames. In this experimental setup, the first 4 frames are in static conditions and these 4 timespoints are used to compute the velocity of the initial static timepoint(so that average velocity starts around 0).
